@@ -1,0 +1,56 @@
+# PAPER trading configuration: live public market data, simulated execution.
+# No credentials are needed. Claude review is advisory and optional.
+mode: paper
+data_dir: ./data
+risk_policy_file: risk_policy.example.yaml
+
+strategy:
+  name: btc_5m
+  enabled: true
+  version: btc5m-0.1.0
+  enabled_rule_ids: [btc_5m_twap60_v3]
+  decision_interval_ms: 1000
+
+market_data:
+  series_id: "10684"
+  series_slug: btc-up-or-down-5m
+  reference_symbol: btc/usd
+  secondary_symbol: btcusdt
+
+fair_value:
+  model_version: twap-gauss-1.0.0
+  twap_lookback_s: 60
+  model_error_bps: 3.0
+  vol_uncertainty_mult: 0.30
+
+edge:
+  target_order_usd: 10
+  slippage_buffer: 0.005
+  early_exit_probability: 0.5
+
+exits:
+  convergence_tolerance: 0.01
+  take_profit_per_share: 0.20
+  hold_to_resolution: true
+  on_halt: exit_if_priced
+  on_kill_switch: exit_if_priced
+
+paper:
+  initial_balance_usd: 200
+  latency_ms: 150
+  latency_jitter_ms: 100
+  taker_delay_ms: 50
+  seed: 7
+
+llm:
+  mode: advisory              # off | advisory | required
+  model: claude-opus-5
+  effort: low
+  review_min_conservative_edge: 0.05
+  max_calls_per_minute: 2
+  max_calls_per_hour: 20
+  max_spend_per_day_usd: 5
+  allow_trading_without_llm: true
+
+monitoring:
+  metrics_enabled: false

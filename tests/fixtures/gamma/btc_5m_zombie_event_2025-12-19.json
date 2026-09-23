@@ -1,0 +1,52 @@
+[
+ {
+  "id": "109968",
+  "slug": "btc-updown-5m-1766162100",
+  "title": "Bitcoin Up or Down - December 19, 11:35AM-11:40AM ET",
+  "description": "This market will resolve to \"Up\" if the Bitcoin price at the end of the time range specified in the title is greater than or equal to the price at the beginning of that range. Otherwise, it will resolve to \"Down\".\nThe resolution source for this market is information from Chainlink, specifically the BTC/USD data stream available at https://data.chain.link/streams/btc-usd.\nPlease note that this market is about the price according to Chainlink data stream BTC/USD, not according to other sources or spot markets.",
+  "resolutionSource": "https://data.chain.link/streams/btc-usd",
+  "endDate": "2025-12-19T16:40:00Z",
+  "active": true,
+  "closed": false,
+  "archived": false,
+  "restricted": true,
+  "enableOrderBook": false,
+  "negRisk": false,
+  "startTime": "2025-12-19T16:35:00Z",
+  "seriesSlug": "btc-up-or-down-5m",
+  "version": "v1",
+  "markets": [
+   {
+    "id": "964335",
+    "question": "Bitcoin Up or Down - December 19, 11:35AM-11:40AM ET",
+    "conditionId": "0x33f2f9edc51b2f6f92f2636b6fce7ee468770a581e6951c301b932fd7a3fd127",
+    "slug": "btc-updown-5m-1766162100",
+    "resolutionSource": "https://data.chain.link/streams/btc-usd",
+    "endDate": "2025-12-19T16:40:00Z",
+    "description": "This market will resolve to \"Up\" if the Bitcoin price at the end of the time range specified in the title is greater than or equal to the price at the beginning of that range. Otherwise, it will resolve to \"Down\".\nThe resolution source for this market is information from Chainlink, specifically the BTC/USD data stream available at https://data.chain.link/streams/btc-usd.\nPlease note that this market is about the price according to Chainlink data stream BTC/USD, not according to other sources or spot markets.",
+    "outcomes": "[\"Up\", \"Down\"]",
+    "active": true,
+    "closed": false,
+    "restricted": true,
+    "enableOrderBook": false,
+    "orderPriceMinTickSize": 0.01,
+    "orderMinSize": 5,
+    "clobTokenIds": "[\"44594613733704690315394897227759662521183429824282007907633921479634990989260\", \"89077455060153802984632332231552501115671307713789066937817034009529706763206\"]",
+    "negRisk": false,
+    "eventStartTime": "2025-12-19T16:35:00Z",
+    "feesEnabled": true,
+    "feeType": "crypto_fees_v2",
+    "feeSchedule": {
+     "exponent": 1,
+     "rate": 0.07,
+     "takerOnly": true,
+     "rebateRate": 0.2
+    },
+    "version": "v1",
+    "bestBid": 0,
+    "bestAsk": 1,
+    "spread": 1
+   }
+  ]
+ }
+]

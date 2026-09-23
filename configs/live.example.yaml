@@ -1,0 +1,36 @@
+# LIVE configuration TEMPLATE. Copy to configs/live.yaml only after reading
+# docs/deployment.md "Live procedure". Loading this file NEVER enables live by
+# itself: every live-lock precondition must pass (see `make live-readiness`).
+mode: live
+data_dir: ./data
+promotion_stage_required_for_live: SMALL_LIVE
+risk_policy_file: risk_policy.example.yaml
+
+strategy:
+  name: btc_5m
+  enabled: false              # the operator flips this explicitly
+  version: btc5m-0.1.0
+  enabled_rule_ids: [btc_5m_twap60_v3]
+
+edge:
+  target_order_usd: 5
+
+llm:
+  mode: advisory
+  allow_trading_without_llm: false   # live: no review => no trade
+
+execution:
+  entry_order_type: FAK
+  exit_order_type: FAK
+  submit_timeout_s: 5
+  unknown_state_timeout_s: 20
+
+watchdog:
+  cancel_orders_on_halt: true
+
+compliance:
+  require_geoblock_endpoint_for_live: true
+
+monitoring:
+  metrics_enabled: true
+  metrics_bind: 127.0.0.1

@@ -1,0 +1,49 @@
+# Risk policy for PAPER trading. Every field is documented in docs/risk.md.
+# Values are conservative starting points, NOT claims of optimality.
+# Hard caps in src/polymarket_bot/risk/hard_caps.py always win; for LIVE the
+# policy must already be within caps (the live lock refuses clamped policies).
+
+# size / exposure
+max_position_usd: 20          # max cost basis per outcome token
+max_total_exposure_usd: 60    # sum of cost bases of all open positions + in-flight buys
+max_order_size_usd: 20        # single order notional
+max_open_positions: 2
+max_positions_per_market: 1   # never hold both Up and Down of the same window
+min_balance_reserve_usd: 0
+
+# loss limits (breach => KILL_SWITCH, manual reset only)
+max_daily_loss_usd: 30
+max_daily_loss_pct: 0.10
+max_drawdown_pct: 0.20
+max_consecutive_losses: 6     # breach => HALTED (manual)
+
+# market quality
+max_spread: 0.04
+max_slippage: 0.02
+min_liquidity_usd: 25
+min_entry_price: 0.05
+max_entry_price: 0.95
+
+# signal quality
+min_conservative_edge: 0.03   # probability units, after fees, slippage, uncertainty, exit cost
+max_uncertainty: 0.25         # width of [p_lower, p_upper]
+
+# freshness / timing
+max_data_age_ms: 2000
+max_reference_age_ms: 5000
+max_clock_drift_ms: 1000
+max_order_age_seconds: 30
+min_time_to_expiry_s: 45
+min_time_since_start_s: 5
+require_reconciled_within_s: 120
+
+# rate limits / cooldowns
+max_trades_per_minute: 2
+max_trades_per_hour: 20
+max_trades_per_day: 120
+cooldown_same_market_s: 30
+cooldown_after_loss_s: 60
+
+# exits
+allow_exits_when_halted: true
+exits_require_fresh_book: true
