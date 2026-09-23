@@ -41,6 +41,60 @@ See `docs/research.md`. Key outcomes:
 | Promotion gates + live lock (15 checks) + compliance gate | IMPLEMENTED, TESTED |
 | Secret scanner script + boundary tests | IMPLEMENTED, TESTED |
 
+## Phase 4 — Data — DONE
+
+| Component | Status |
+|---|---|
+| Market discovery (Gamma series events, slug fallback, rule validation on ingest) | IMPLEMENTED, TESTED (real Gamma fixtures) |
+| Public REST (GET-only, bounded retries, no 4xx retry, 429 Retry-After), `/time` | IMPLEMENTED, TESTED (mock transport); `/time` format VERIFIED (integer seconds) |
+| Resilient WebSocket (heartbeat, silence timeout, jittered backoff, explicit resubscribe) | IMPLEMENTED, TESTED (fake server) |
+| CLOB order book (snapshot, deltas, tick change, echo verification, invalidation) | IMPLEMENTED, TESTED |
+| Reference prices (RTDS Chainlink + Binance, outlier hold, EWMA vol, TWAP, price-to-beat) | IMPLEMENTED, TESTED; RTDS message format NOT VERIFIED live |
+| Clock drift from exchange timestamps | IMPLEMENTED, TESTED |
+| Session recorder (raw frames + bot events, synthetic flag) and strict replay reader | IMPLEMENTED, TESTED |
+| REST fallback resync for books | IMPLEMENTED, TESTED (hub) |
+
+## Phase 5 — BTC 5m chain — DONE
+
+| Component | Status |
+|---|---|
+| Resolution rule registry (hash of verbatim rules text; twap60 v3 enabled, spot v1 registered-disabled, unknown => reject) | IMPLEMENTED, TESTED, VERIFIED (11/11 real resolved markets) |
+| Features (versioned, no lookahead: future-data invariance test) | IMPLEMENTED, TESTED |
+| Fair value: TWAP-aware Gaussian model with uncertainty band; optional calibrator that can only widen | IMPLEMENTED, TESTED; calibration against real outcomes NOT VERIFIED (needs recorded data) |
+| Edge: book walk, fees, slippage buffer, exit cost, conservative + worst-case edge | IMPLEMENTED, TESTED |
+| Exit engine (value, take-profit, invalidation, time, risk exits; hold when unpriceable) | IMPLEMENTED, TESTED |
+
+Two real bugs were found by these tests and fixed in code (not by editing tests):
+`worst_case_edge` could exceed the conservative edge; take-profit floor ignored the
+exit fee. Other initial failures were wrong test scenarios (forgotten exit fee;
+assumed exact Up/Down symmetry, which is not a model property) and were corrected
+with added regression tests.
+
+## Phase 6 — Paper execution — DONE
+
+| Component | Status |
+|---|---|
+| Paper exchange: order matchable only at `t + latency + jitter + taker_delay`, matched against the book observed *then* | IMPLEMENTED, TESTED |
+| FAK partial fills / FOK all-or-nothing; GTC/GTD refused | IMPLEMENTED, TESTED |
+| Book walk (slippage) within limit; per-level official taker fees rounded up | IMPLEMENTED, TESTED |
+| Own fills hide displayed liquidity for `liquidity_replenish_ms` | IMPLEMENTED, TESTED |
+| Balance (incl. worst-case fee) and share checks; independent exchange ledger; settlement | IMPLEMENTED, TESTED |
+| Execution engine: write-ahead, one submission, timeout/transport error/ambiguous ack => UNKNOWN (never resubmitted), no new orders while UNKNOWN, restart => UNKNOWN, venue-history resolution, operator resolution | IMPLEMENTED, TESTED |
+| Fill idempotency; violations for unknown-order fill, fill beyond limit, overfill, terminal/fill mismatch | IMPLEMENTED, TESTED |
+| Portfolio: fees in cost basis, marking at best bid, day roll, loss streak, settlement | IMPLEMENTED, TESTED (incl. cash-conservation property test) |
+| End-to-end decision → engine → paper exchange → portfolio → reconciliation | TESTED (integration) |
+
+Real bug found: pro-rata cost removal on partial sells used unquantized Decimal
+division, so `cash + open cost − realized PnL` drifted by ~1e-25 USD. Fixed by
+quantizing to 1e-10 USD (and removing the full basis on a full exit).
+
+Limitations of the paper model (documented, deliberate): no queue position (we
+never rest orders), no market impact beyond our own consumption, hidden liquidity
+not modelled, the latency distribution is uniform and not fitted to real data.
+
+Test count at end of Phase 6: **366 passing** (ruff, mypy --strict clean).
+
 ## Next
 
-Phase 4 (data), Phase 5 (BTC 5m chain), Phase 6 (paper execution), Phase 7 (Claude/MCP), Phase 8/9.
+Phase 7 (Claude client, budget, reviewer, restricted MCP server), runtime
+orchestration + replay engine + CLI, Phase 8 (validation/backtests), Phase 9 (report).

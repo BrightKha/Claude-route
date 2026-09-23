@@ -97,6 +97,9 @@ class PaperExchangeConfig(_Strict):
     taker_delay_ms: int = Field(50, ge=0, description="Polymarket crypto taker delay")
     seed: int = 7
     reject_probability: float = Field(0.0, ge=0, le=1, description="Chaos testing only")
+    liquidity_replenish_ms: int = Field(
+        2000, ge=0, description="Our simulated fills hide displayed size for this long"
+    )
 
 
 class LLMConfig(_Strict):
