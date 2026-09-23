@@ -100,6 +100,9 @@ class PaperExchangeConfig(_Strict):
     liquidity_replenish_ms: int = Field(
         2000, ge=0, description="Our simulated fills hide displayed size for this long"
     )
+    fee_multiplier: Decimal = Field(
+        Decimal(1), ge=1, le=5, description="Stress testing only: scale simulated fees up"
+    )
 
 
 class LLMConfig(_Strict):
@@ -155,7 +158,7 @@ class StrategyConfig(_Strict):
 class McpConfig(_Strict):
     max_proposals_per_minute: int = Field(2, ge=0)
     proposal_ttl_s: int = Field(30, gt=0)
-    mcp_trade_requires_deterministic_edge: bool = True
+    mcp_trade_requires_deterministic_edge: Literal[True] = True  # cannot be disabled
     http_enabled: bool = False
     http_bind: str = "127.0.0.1"
     http_port: int = Field(8765, gt=1024, lt=65536)

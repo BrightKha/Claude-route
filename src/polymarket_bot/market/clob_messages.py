@@ -150,6 +150,7 @@ def apply_market_event(
                         dec(ch.get("size"), "size"),
                         received_ms=received_ms,
                         exchange_ms=exchange_ms,
+                        check_crossed=False,
                     )
                 except MessageError as exc:
                     book.invalidate(f"malformed price_change: {exc}")
@@ -158,6 +159,7 @@ def apply_market_event(
                 echoes[token] = (ch.get("best_bid"), ch.get("best_ask"))
                 stats.applied += 1
             for token, (bb, ba) in echoes.items():
+                books[token].check_crossed()  # once per event, after all its levels
                 try:
                     books[token].verify_top(
                         dec(bb, "best_bid") if bb not in (None, "") else None,

@@ -169,3 +169,54 @@ class ExitEngine:
             timestamp_ms=now_ms,
         )
         return ExitEvaluation("EXIT", tuple(reasons), signal)
+
+    def forced_exit(
+        self,
+        pos: HeldPosition,
+        snap: MarketSnapshot | None,
+        estimate: FairValueEstimate | None,
+        *,
+        reason: str,
+        now_ms: int,
+    ) -> ExitEvaluation:
+        """Operator/proposal-requested exit, priced like a risk exit (never a dump).
+
+        Holds when the position cannot be priced safely or the best bid is below the
+        conservative floor ``lower - risk_exit_discount``.
+        """
+        cfg = self._cfg
+        if pos.shares <= 0 or snap is None or estimate is None or not estimate.ok:
+            return ExitEvaluation("HOLD", (f"{reason}: cannot price safely",), None)
+        if snap.time_to_expiry_ms <= cfg.no_exit_window_s * 1000:
+            return ExitEvaluation("HOLD", (f"{reason}: resolution imminent",), None)
+        if pos.shares < snap.market.min_order_size:
+            return ExitEvaluation("HOLD", (f"{reason}: below min order size",), None)
+        quote = snap.quote(pos.outcome)
+        if (
+            not quote.book_valid
+            or quote.book_age_ms is None
+            or quote.book_age_ms > cfg.exit_stale_data_ms
+            or quote.best_bid is None
+        ):
+            return ExitEvaluation("HOLD", (f"{reason}: stale or missing book",), None)
+        _, lower, _ = estimate.for_outcome(pos.outcome)
+        lo = Decimal(str(round(lower, 6)))
+        tick = snap.market.tick_size
+        floor = max(
+            cfg.min_exit_price,
+            floor_to_tick(max(lo - cfg.risk_exit_discount, cfg.min_exit_price), tick),
+        )
+        if quote.best_bid < floor:
+            return ExitEvaluation(
+                "HOLD", (f"{reason}: best bid {quote.best_bid} below floor {floor}",), None
+            )
+        signal = ExitSignal(
+            token_id=pos.token_id,
+            condition_id=pos.condition_id,
+            reasons=(reason,),
+            urgency="normal",
+            shares=pos.shares,
+            min_price=floor,
+            timestamp_ms=now_ms,
+        )
+        return ExitEvaluation("EXIT", (reason,), signal)

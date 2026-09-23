@@ -121,6 +121,48 @@ def test_crossed_book_invalidated():
     assert "crossed" in books[UP].invalid_reason
 
 
+def _multi_pc(changes, ts="1001"):
+    return {
+        "event_type": "price_change",
+        "market": "0xc",
+        "timestamp": ts,
+        "price_changes": [
+            {"asset_id": UP, "price": p, "size": sz, "side": side, "best_bid": bb, "best_ask": ba}
+            for p, sz, side, bb, ba in changes
+        ],
+    }
+
+
+def test_multi_level_event_may_pass_through_a_transient_cross():
+    # Regression (found by the synthetic replay): the book moves up two ticks in one
+    # event; applying the new bid before removing the old ask is transiently crossed.
+    books, stats = _books(), ApplyStats()
+    apply_market_event(_ws_book_event([(".48", "30")], [(".50", "25")]), books, 1, stats)
+    event = _multi_pc(
+        [
+            ("0.51", "10", "BUY", "0.51", "0.53"),
+            ("0.48", "0", "BUY", "0.51", "0.53"),
+            ("0.53", "20", "SELL", "0.51", "0.53"),
+            ("0.50", "0", "SELL", "0.51", "0.53"),
+        ]
+    )
+    apply_market_event(event, books, 2, stats)
+    snap = books[UP].snapshot()
+    assert snap is not None, books[UP].invalid_reason
+    assert (snap.best_bid, snap.best_ask) == (D("0.51"), D("0.53"))
+
+
+def test_multi_level_event_ending_crossed_still_invalidates():
+    books, stats = _books(), ApplyStats()
+    apply_market_event(_ws_book_event([(".48", "30")], [(".50", "25")]), books, 1, stats)
+    event = _multi_pc(
+        [("0.51", "10", "BUY", "0.51", "0.50"), ("0.49", "5", "SELL", "0.51", "0.49")]
+    )
+    apply_market_event(event, books, 2, stats)
+    assert books[UP].snapshot() is None
+    assert "crossed" in books[UP].invalid_reason
+
+
 def test_out_of_order_delta_invalidates():
     books, stats = _books(), ApplyStats()
     apply_market_event(_ws_book_event([(".48", "30")], [(".52", "25")], ts="5000"), books, 1, stats)

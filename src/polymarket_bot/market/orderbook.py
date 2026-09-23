@@ -63,7 +63,7 @@ class OrderBookState:
         self.sequence += 1
         self.valid = True
         self.invalid_reason = ""
-        self._check_crossed()
+        self.check_crossed()
 
     def apply_level(
         self,
@@ -73,7 +73,11 @@ class OrderBookState:
         *,
         received_ms: int,
         exchange_ms: int | None,
+        check_crossed: bool = True,
     ) -> None:
+        """Apply one level. Multi-level events pass ``check_crossed=False`` and call
+        :meth:`check_crossed` once after the whole event: a batch may legitimately
+        pass through a transiently crossed state (e.g. the book moving up a tick)."""
         if not self.valid:
             return  # deltas on an invalid book are meaningless; wait for a snapshot
         if exchange_ms is not None and self.exchange_ms is not None:
@@ -95,7 +99,8 @@ class OrderBookState:
         if exchange_ms is not None:
             self.exchange_ms = max(exchange_ms, self.exchange_ms or exchange_ms)
         self.sequence += 1
-        self._check_crossed()
+        if check_crossed:
+            self.check_crossed()
 
     def verify_top(self, best_bid: Decimal | None, best_ask: Decimal | None) -> None:
         """Cross-check our top of book against the exchange's echo."""
@@ -114,7 +119,9 @@ class OrderBookState:
             return
         self.tick_size = tick
 
-    def _check_crossed(self) -> None:
+    def check_crossed(self) -> None:
+        if not self.valid:
+            return
         if self._bids and self._asks and max(self._bids) >= min(self._asks):
             self.invalidate(f"crossed book bid={max(self._bids)} ask={min(self._asks)}")
 

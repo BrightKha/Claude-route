@@ -117,7 +117,11 @@ class PaperExchange:
             return f"limit {intent.limit_price} not on tick {market.tick_size}"
         if intent.side is Side.BUY:
             assert intent.buy_amount_usd is not None
-            worst_fee = market.fee_schedule.fee_rate_at(intent.limit_price) / intent.limit_price
+            worst_fee = (
+                market.fee_schedule.fee_rate_at(intent.limit_price)
+                * self._cfg.fee_multiplier
+                / intent.limit_price
+            )
             if intent.buy_amount_usd * (1 + worst_fee) > self.cash_usd:
                 return "not enough balance"
         else:
@@ -182,7 +186,9 @@ class PaperExchange:
         due = sorted((p for p in self._pending if p.due_ms <= now_ms), key=lambda p: p.due_ms)
         for p in due:
             self._pending.remove(p)
-            self._match(p, now_ms)
+            # Matched against the current book (the replay engine advances before applying
+            # the next event, so this is the book as of the arrival time), stamped at arrival.
+            self._match(p, p.due_ms)
 
     def _available(
         self, book: OrderBookSnapshot, side: str, now_ms: int
@@ -269,7 +275,7 @@ class PaperExchange:
             return
         cum = ZERO
         for i, (price, size) in enumerate(fills):
-            fee = p.fees.taker_fee(size, price)
+            fee = p.fees.taker_fee(size, price) * self._cfg.fee_multiplier
             side_key = "ask" if intent.side is Side.BUY else "bid"
             self._consume(intent.token_id, side_key, price, size, now_ms)
             if intent.side is Side.BUY:

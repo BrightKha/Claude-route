@@ -2,7 +2,7 @@
 UV ?= uv
 PY := $(UV) run python
 CONFIG ?= configs/paper.yaml
-INPUT ?= data/synthetic/session.jsonl
+INPUT ?= data/synthetic/session
 REPORT ?= reports/backtest
 
 .PHONY: help install lint format typecheck test test-fast security secrets-scan audit check \
@@ -50,7 +50,7 @@ replay: ## Replay a recorded/synthetic session through the paper exchange
 	$(PY) -m polymarket_bot.app replay --config $(CONFIG) --input $(INPUT)
 
 backtest: ## Backtest + robustness report
-	$(PY) -m polymarket_bot.app backtest --config $(CONFIG) --input $(INPUT) --report $(REPORT)
+	$(PY) -m polymarket_bot.app backtest --config $(CONFIG) --input $(INPUT) --report $(REPORT) --robustness
 
 walk-forward: ## Walk-forward calibration study
 	$(PY) -m polymarket_bot.app walk-forward --config $(CONFIG) --input $(INPUT) --report $(REPORT)

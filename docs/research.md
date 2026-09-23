@@ -45,10 +45,18 @@ the optional `live` extra. Everything else talks to internal interfaces.
    recovery behaviour. Allowance problems surface as rejections → HALT.
 2. **Implicit wallet deployment.** `AsyncSecureClient.create()` calls
    `_ensure_wallet_ready()`, which **deploys a Deposit Wallet through the
-   relayer** when `wallet` is omitted and not yet deployed.
-   → The adapter requires an explicit, pre-existing wallet address
-   (`POLYMARKET_WALLET_ADDRESS`); if the wallet does not exist the SDK raises
-   instead of deploying.
+   relayer** when the wallet is a Deposit Wallet that is not yet deployed.
+   **Correction (Phase 7, re-reading `_ensure_wallet_ready` /
+   `_deploy_default_deposit_wallet`):** passing an explicit `wallet` does *not*
+   prevent this when that address equals the signer's default Deposit Wallet —
+   the SDK then deploys it. Only a *different*, non-deployed address raises.
+   → The adapter requires an explicit wallet address
+   (`POLYMARKET_WALLET_ADDRESS`) **and** builds the client with
+   `AsyncSecureClient._create(...)`, which performs the same key/credential
+   setup without `_ensure_wallet_ready()`. A non-deployed wallet then surfaces
+   as order rejections (→ HALT), never as an on-chain deployment. This relies
+   on a private SDK method: the pin is exact (`==0.10.0`) and a test fails if
+   the method's signature changes.
 3. **Dangerous capabilities on the same object.** The secure client exposes
    `transfer_erc20`, `approve_erc20`, `withdraw_from_perps`,
    `execute_transaction`, `split/merge/redeem_positions`, etc.
@@ -194,7 +202,14 @@ bot stop trading automatically.
 
 - **39 fully blocked countries including France (FR)**, US, GB, DE, IT, NL,
   BE, AU, JP… plus close-only countries (SG, PL, TH, TW) and blocked regions
-  (Ontario, Quebec, BC, Alberta, Crimea…).
+  (Ontario, Quebec, BC, Alberta, Crimea…). Note: the page states "39" but its
+  list enumerates 40 ISO codes; `ComplianceConfig.blocked_countries` contains
+  all 40 (the stricter reading).
+- Geoblock endpoint `GET https://polymarket.com/api/geoblock` → JSON with
+  `blocked` (bool), `ip`, `country`, `region` (VERIFIED from a real response;
+  fixture `tests/fixtures/polymarket/geoblock_blocked_us.json`, IP anonymised).
+- CLOB `GET /time` returns integer epoch **seconds** as plain text (VERIFIED);
+  clock drift is therefore measured from WebSocket exchange timestamps (ms).
 - Using a VPN or similar to bypass restrictions violates Polymarket's ToS
   (§2.1.4).
 - Primary servers: `eu-west-2`.

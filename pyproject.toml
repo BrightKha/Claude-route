@@ -112,3 +112,8 @@ filterwarnings = ["error"]
 # ---------------------------------------------------------------- bandit
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
+# B101: asserts are only used for type narrowing of invariants already enforced by
+#       constructors (e.g. OrderIntent.__post_init__); never for runtime validation.
+# B311: `random` is only used for simulation, reconnect jitter and bootstrap resampling;
+#       the bot never generates secrets or keys.
+skips = ["B101", "B311"]

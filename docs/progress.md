@@ -108,8 +108,46 @@ Test count at end of Phase 6: **366 passing** (ruff, mypy --strict clean).
 | HTTP transport for MCP | NOT IMPLEMENTED (refused at startup; stdio only) |
 | Runtime processing of MCP proposals | TODO (runtime step) |
 
+## Runtime, replay, CLI, live adapter — DONE (live NOT VERIFIED)
+
+| Component | Status |
+|---|---|
+| `TradingCore`: one deterministic step shared by paper/replay/live (fills → settle → mark → loss limits → UNKNOWN resolution → reconciliation → lifecycle → exits → entries → MCP proposals → status) | IMPLEMENTED, TESTED |
+| Kill switch on execution/portfolio invariant violations and loss-limit breaches | IMPLEMENTED, TESTED (replay) |
+| Reconciliation each interval (never while an order is open), escalation after 2 consecutive mismatches | IMPLEMENTED, TESTED |
+| Lifecycle: SYNCING→PAPER after reconciliation + no watchdog blockers; HALTED→SYNCING auto-recovery (rate-limited) | IMPLEMENTED, TESTED (disconnect chaos replay) |
+| Claude review off the decision path (background task, verdict cache); `required` mode without a client blocks | IMPLEMENTED, TESTED |
+| MCP proposals processed by the core: expiry, unknown market/kind rejected, trade needs a passing deterministic candidate, close priced as a risk exit | IMPLEMENTED, TESTED (rejection paths); accepted-trade path TESTED only indirectly |
+| Replay engine: ticks before each message, paper matching before applying it, watchdog each tick | IMPLEMENTED, TESTED (determinism; no-lookahead by truncation) |
+| SYNTHETIC session generator (real message formats, flagged `synthetic: true`) | IMPLEMENTED, TESTED |
+| CLI: synth, replay, backtest (+robustness, +evidence), walk-forward, paper, record, status, kill-switch, promotion, live-readiness, mcp-server, `--mode paper/replay/live` | IMPLEMENTED, TESTED (live stays locked) |
+| Live-data paper runner (WS + Gamma + REST resync + recorder + watchdog + loop-stall thread, graceful SIGTERM) | IMPLEMENTED; smoke-tested here only against a blocked network (reconnect/backoff/shutdown OK); **NOT VERIFIED** on real Polymarket data |
+| Live venue adapter (SDK whitelist, `_create` to avoid wallet deployment, sign+post only, FAK/FOK only) | IMPLEMENTED, TESTED against a fake SDK client built from the SDK's models; **NOT VERIFIED** against the real exchange |
+| Live bootstrap: flat dedicated wallet required, runtime live-lock re-evaluation before minting LiveAuthorization | IMPLEMENTED; **NOT VERIFIED** |
+| Research: backtest report (PnL gross/net, CI, expectancy, hit rate, fill ratio, slippage vs planned VWAP, fees, drawdown, Brier/log-loss vs market-implied, calibration table, PnL by edge/TTE/vol/hour/exit/source), robustness perturbations, walk-forward calibrator | IMPLEMENTED, TESTED (metrics unit tests; end-to-end on SYNTHETIC data only) |
+
+Bugs found in this step and fixed in code:
+* **Order book** (real bug, market-data layer): a multi-level `price_change`
+  event could pass through a transiently crossed state and wrongly invalidate
+  the book; crossing is now checked once per event (regression tests added).
+* **Fail-open gap**: with `llm.mode=required` and no usable Claude client the
+  assembly created no reviewer, which the core treated as "LLM off" (trading
+  allowed). A reviewer is now always built in paper/live; it answers
+  "not reviewed", which blocks trading in `required` mode (test added).
+* **Research correction**: explicit `wallet` does not prevent the SDK from
+  deploying a Deposit Wallet (docs/research.md §1.1 corrected; adapter uses
+  `_create`).
+
+NOT AVAILABLE / TODO:
+* "With vs without Claude" comparison: Claude is not called in replay and
+  recorded reviews are not replayed yet.
+* Automatic on-chain redemption of resolved positions (live): not implemented;
+  settled winnings are tracked as `pending_redemption` until redeemed manually.
+* MCP HTTP transport: not implemented (stdio only).
+* Order heartbeats / resting orders: not implemented (FAK-only policy).
+
 ## Next
 
-Runtime orchestration (decision loop, exits, settlement, watchdog/reconciliation
-wiring, proposal processing), replay engine, CLI, Phase 8 (validation/backtests),
-Phase 9 (report).
+Phase 8 (validation report on synthetic + any recorded data), documentation
+(README, architecture, security, trading, risk, deployment, backtesting,
+incident response), Docker, Phase 9 final report.
