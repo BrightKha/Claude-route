@@ -1,0 +1,60 @@
+{
+  "session": "<scratch>/sessions/day1",
+  "synthetic": true,
+  "samples": 5472,
+  "windows": 288,
+  "folds": [
+    {
+      "fold": 1,
+      "train_windows": 57,
+      "test_windows": 58,
+      "test_samples": 1102,
+      "brier_baseline": 0.129502670873091,
+      "brier_calibrated": 0.1353657077616897,
+      "brier_market_mid": 0.123196778584392,
+      "log_loss_baseline": 0.3945437338365658,
+      "log_loss_calibrated": 0.41676386184119024,
+      "calibration_improves": false,
+      "baseline_skill_vs_market": -0.05118552904676288
+    },
+    {
+      "fold": 2,
+      "train_windows": 115,
+      "test_windows": 57,
+      "test_samples": 1083,
+      "brier_baseline": 0.11520566217147396,
+      "brier_calibrated": 0.11210888053456462,
+      "brier_market_mid": 0.1138421514312096,
+      "log_loss_baseline": 0.35666058181275656,
+      "log_loss_calibrated": 0.3437322070738824,
+      "calibration_improves": true,
+      "baseline_skill_vs_market": -0.011977204604115999
+    },
+    {
+      "fold": 3,
+      "train_windows": 172,
+      "test_windows": 58,
+      "test_samples": 1102,
+      "brier_baseline": 0.1755732251995209,
+      "brier_calibrated": 0.17873880039052947,
+      "brier_market_mid": 0.16559938747731395,
+      "log_loss_baseline": 0.5233285718705483,
+      "log_loss_calibrated": 0.5535398342426251,
+      "calibration_improves": false,
+      "baseline_skill_vs_market": -0.06022871143513919
+    },
+    {
+      "fold": 4,
+      "train_windows": 230,
+      "test_windows": 58,
+      "test_samples": 1102,
+      "brier_baseline": 0.15253418590402676,
+      "brier_calibrated": 0.15268111988575586,
+      "brier_market_mid": 0.153370666969147,
+      "log_loss_baseline": 0.47314738147906416,
+      "log_loss_calibrated": 0.47992183922491966,
+      "calibration_improves": false,
+      "baseline_skill_vs_market": 0.005453983357120773
+    }
+  ]
+}

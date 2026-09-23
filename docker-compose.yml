@@ -1,0 +1,38 @@
+# Paper trading + restricted MCP server. No secrets are needed for paper mode.
+# The MCP service must never receive trading or API secrets (it refuses to start).
+services:
+  bot:
+    build: .
+    image: polymarket-bot:paper
+    command: ["--config", "configs/paper.yaml", "paper"]
+    volumes:
+      - bot-data:/data
+    environment:
+      TRADING_MODE: paper
+      LIVE_TRADING_ENABLED: "false"
+      LOG_LEVEL: INFO
+      # ANTHROPIC_API_KEY: provide via your secret manager if llm.mode != off
+    ports:
+      - "127.0.0.1:9108:9108"   # metrics, only if monitoring.metrics_enabled
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  mcp:
+    image: polymarket-bot:paper
+    depends_on: [bot]
+    command: ["--config", "configs/paper.yaml", "mcp-server"]
+    stdin_open: true            # stdio transport; attach your MCP client to this service
+    volumes:
+      - bot-data:/data          # state.sqlite opened read-only; writes go to inbox.sqlite
+    environment:
+      LOG_LEVEL: WARNING
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+volumes:
+  bot-data:

@@ -45,6 +45,7 @@ log = logging.getLogger(__name__)
 
 RESYNC_CHECK_S = 5.0
 HEARTBEAT_S = 0.5
+METRICS_S = 5.0
 
 
 def rtds_subscribe_frame(md: MarketDataConfig) -> str:
@@ -253,6 +254,17 @@ async def run_session(
             asm.health.beat_loop()
             await _sleep_or_stop(stop, HEARTBEAT_S)
 
+    async def metrics_loop() -> None:
+        from polymarket_bot.monitoring.metrics import BotMetrics  # noqa: PLC0415
+
+        mon = config.monitoring
+        metrics = BotMetrics()
+        metrics.serve(mon.metrics_bind, mon.metrics_port)
+        log.info("metrics on http://%s:%d/metrics", mon.metrics_bind, mon.metrics_port)
+        while not stop.is_set():
+            metrics.update(asm)
+            await _sleep_or_stop(stop, METRICS_S)
+
     tasks = list(already_running or [])
     jobs: list[Coroutine[Any, Any, None]] = []
     if not tasks:
@@ -263,6 +275,8 @@ async def run_session(
             feeds.resync_loop(stop),
         ]
     jobs += [decision_loop(), asm.watchdog.run(stop)] if trade else [heartbeat_loop()]
+    if trade and config.monitoring.metrics_enabled:
+        jobs.append(metrics_loop())
     tasks += [asyncio.create_task(j) for j in jobs]
     log.info("session started (data dir %s, trading=%s)", data_dir, trade)
     try:

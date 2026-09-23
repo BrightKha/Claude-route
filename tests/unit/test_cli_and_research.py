@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import numpy as np
@@ -205,3 +206,55 @@ def test_required_llm_without_client_blocks_entries(tmp_path: Path) -> None:
     verdict = reviewer.verdict_for(make_candidate(conservative_edge=0.2), T0)
     assert verdict.status == "not_reviewed"
     assert verdict.allowed is False
+
+
+def test_metrics_exporter_reflects_core(tmp_path: Path) -> None:
+    from prometheus_client import generate_latest  # noqa: PLC0415
+
+    from polymarket_bot.monitoring.metrics import BotMetrics  # noqa: PLC0415
+
+    asm = assemble(
+        load_config(CONFIG), mode=TradingMode.PAPER, clock=SimulatedClock(T0), data_dir=tmp_path
+    )
+    asm.core.start()
+    metrics = BotMetrics()
+    metrics.update(asm)
+    text = generate_latest(metrics.registry).decode()
+    assert 'bot_state{state="SYNCING"} 1.0' in text
+    assert "bot_cash_usd 200.0" in text
+    assert "bot_kill_switch_engaged 0.0" in text
+    assert "0x" not in text  # no addresses/ids as labels
+
+
+def test_operator_can_resolve_unknown_order_only_with_note(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from polymarket_bot.domain.orders import OrderIntent, OrderRecord  # noqa: PLC0415
+    from polymarket_bot.domain.types import (  # noqa: PLC0415
+        OrderPurpose,
+        OrderStatus,
+        OrderType,
+        Side,
+    )
+    from polymarket_bot.storage.sqlite_store import StateStore  # noqa: PLC0415
+    from tests.factories import COND, UP  # noqa: PLC0415
+
+    store = StateStore(tmp_path / "state.sqlite")
+    intent = OrderIntent(
+        "oi-x", "rd-x", COND, "btc-updown-5m-1790127600", UP, "Up", Side.BUY, OrderType.FAK,
+        Decimal("0.5"), Decimal("5"), None, OrderPurpose.ENTRY, T0,
+    )  # fmt: skip
+    store.insert_order_intent(intent)
+    store.update_order(
+        OrderRecord(intent, OrderStatus.UNKNOWN, None, Decimal(0), Decimal(0), Decimal(0), T0)
+    )
+    store.close()
+    args = ["--config", CONFIG, "--data-dir", str(tmp_path), "orders"]
+    assert main([*args, "list"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)[0]["status"] == "UNKNOWN"
+    assert main([*args, "resolve-no-fill", "--intent", "oi-x", "--operator", "op"]) == EXIT_FAIL
+    note = ["--note", "checked venue: no order, no trade"]
+    assert main([*args, "resolve-no-fill", "--intent", "oi-x", "--operator", "op", *note]) == 0
+    capsys.readouterr()
+    assert main([*args, "list"]) == EXIT_OK
+    assert json.loads(capsys.readouterr().out) == []

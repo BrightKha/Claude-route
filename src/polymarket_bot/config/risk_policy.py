@@ -35,7 +35,7 @@ class RiskPolicy(BaseModel):
     max_daily_loss_usd: Decimal = Field(Decimal("30"), gt=0)
     max_daily_loss_pct: Decimal = Field(Decimal("0.10"), gt=0, le=1)
     max_drawdown_pct: Decimal = Field(Decimal("0.20"), gt=0, le=1)
-    max_consecutive_losses: int = Field(6, ge=1, description="Breach => HALTED (manual)")
+    max_consecutive_losses: int = Field(6, ge=1, description="Reached => entries blocked")
 
     # --- market quality ------------------------------------------------------------
     max_spread: Decimal = Field(Decimal("0.04"), gt=0)

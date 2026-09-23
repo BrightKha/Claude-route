@@ -15,7 +15,7 @@ min_balance_reserve_usd: 0
 max_daily_loss_usd: 30
 max_daily_loss_pct: 0.10
 max_drawdown_pct: 0.20
-max_consecutive_losses: 6     # breach => HALTED (manual)
+max_consecutive_losses: 6     # reached => new entries blocked (exits unaffected)
 
 # market quality
 max_spread: 0.04

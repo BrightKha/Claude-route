@@ -146,8 +146,24 @@ NOT AVAILABLE / TODO:
 * MCP HTTP transport: not implemented (stdio only).
 * Order heartbeats / resting orders: not implemented (FAK-only policy).
 
-## Next
+## Phase 8 — Validation — DONE (synthetic data only)
 
-Phase 8 (validation report on synthetic + any recorded data), documentation
-(README, architecture, security, trading, risk, deployment, backtesting,
-incident response), Docker, Phase 9 final report.
+See [validation.md](validation.md). One simulated day (288 windows) +
+robustness + walk-forward + a chaos run (22 disconnects). Three real bugs found
+and fixed (order-book transient cross, settlement ledger, drawdown on
+mark-to-market noise). Operator order-resolution CLI (`orders`) and Prometheus
+exporter added. Real market data: **NOT VERIFIED** (no network access).
+
+## Phase 9 — Report — DONE
+
+[final-report.md](final-report.md). Documentation: README, architecture,
+security, trading, risk, deployment, backtesting, incident response,
+validation. Dockerfile / docker-compose written, **not built** here.
+
+Final test count: **453 passing**; ruff, mypy --strict, bandit, secret scan clean.
+
+## Next (operator)
+
+Record and paper-trade on real data from an eligible jurisdiction, then follow
+docs/final-report.md §10. LIVE remains locked until the promotion evidence
+exists and every live-lock check passes.

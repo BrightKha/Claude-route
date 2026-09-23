@@ -3,8 +3,9 @@
 For an outcome token with fair value ``f`` and lower bound ``l``:
 
 * walk the asks, only through levels whose *marginal* cost
-  (price + fee(price) + slippage buffer) stays below ``l`` — so every share
-  bought has non-negative conservative edge on its own;
+  (price + fee(price) + slippage buffer) stays at or below
+  ``l - min_conservative_edge - expected_exit_cost`` — so every share bought
+  clears the minimum edge on its own;
 * ``executable_price`` = VWAP of that walk (never a mid or theoretical price);
 * ``effective_price`` = VWAP + fee per share + slippage buffer;
 * ``expected_exit_cost`` = P(early exit) x (half spread + exit fee at the bid);

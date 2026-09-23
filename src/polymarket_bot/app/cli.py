@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from polymarket_bot.config.loader import load_config
 from polymarket_bot.config.risk_policy import clamp_to_hard_caps, policy_hash
 from polymarket_bot.config.settings import load_env_settings
 from polymarket_bot.domain.clock import SystemClock
+from polymarket_bot.domain.types import OrderStatus
 from polymarket_bot.lifecycle.kill_switch import KillSwitch, KillSwitchError
 from polymarket_bot.lifecycle.state_machine import BotStateMachine
 from polymarket_bot.monitoring.logging_setup import setup_logging
@@ -352,6 +354,49 @@ def cmd_live(args: argparse.Namespace) -> int:
     return asyncio.run(run_live(config, _data_dir(args, config)))
 
 
+def cmd_orders(args: argparse.Namespace) -> int:
+    """Operator maintenance for orders left open/UNKNOWN (run with the bot stopped)."""
+    config = _config(args)
+    data_dir = _data_dir(args, config)
+    store = StateStore(data_dir / "state.sqlite", read_only=args.action == "list")
+    open_orders = store.load_orders(only_open=True)
+    if args.action == "list":
+        _print(
+            [
+                {
+                    "intent_id": r.intent.intent_id,
+                    "status": r.status.value,
+                    "market_slug": r.intent.market_slug,
+                    "side": r.intent.side.value,
+                    "exchange_order_id": r.exchange_order_id,
+                    "created_ms": r.intent.created_ms,
+                    "last_error": r.last_error,
+                }
+                for r in open_orders
+            ]
+        )
+        return EXIT_OK
+    target = next((r for r in open_orders if r.intent.intent_id == args.intent), None)
+    if target is None or not args.operator.strip() or len(args.note.strip()) < 10:
+        print("refused: need an open intent id, --operator and a --note (>= 10 chars)",
+              file=sys.stderr)  # fmt: skip
+        return EXIT_FAIL
+    now = int(time.time() * 1000)
+    resolved = replace(
+        target,
+        status=OrderStatus.CANCELLED,
+        updated_ms=now,
+        last_error=f"operator {args.operator}: verified no fill on venue: {args.note}",
+    )
+    store.update_order(resolved)
+    AuditLog(data_dir / "audit.jsonl", SystemClock()).append(
+        "operator_order_resolution",
+        {"intent_id": args.intent, "operator": args.operator, "note": args.note},
+    )
+    print(f"{args.intent} marked CANCELLED (no fill). Reconciliation will verify on restart.")
+    return EXIT_OK
+
+
 _RUNTIME_ONLY_CHECKS = frozenset({"account reconciled at startup", "market data healthy"})
 
 
@@ -418,6 +463,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--note", default="")
     s.add_argument("--confirm", default="")
     s.set_defaults(func=cmd_kill_switch)
+
+    s = sub.add_parser("orders", help="list open/UNKNOWN orders; resolve one as no-fill")
+    s.add_argument("action", choices=("list", "resolve-no-fill"))
+    s.add_argument("--intent", default="")
+    s.add_argument("--operator", default="")
+    s.add_argument("--note", default="")
+    s.set_defaults(func=cmd_orders)
 
     s = sub.add_parser("promotion", help="promotion status / operator approval")
     s.add_argument("action", choices=("status", "approve"))

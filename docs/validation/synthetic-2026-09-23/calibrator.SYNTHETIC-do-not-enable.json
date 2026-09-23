@@ -1,0 +1,22 @@
+{
+  "version": "logit-cal-5472",
+  "features": [
+    "baseline_logit",
+    "tau_s",
+    "momentum_30s_bps",
+    "imbalance_up"
+  ],
+  "coef": [
+    1.0041615304439833,
+    -0.0006839805559945535,
+    -0.00011005649300498378,
+    0.35736562337767314
+  ],
+  "intercept": 0.22889717685038563,
+  "dataset_sha256": "77a53d06d200bcfbdda934b0575b72338e6243be7d3011d3a3d6eb569bb47708",
+  "metrics": {
+    "n_samples": 5472,
+    "synthetic": true
+  },
+  "warning": "SYNTHETIC \u2014 do not enable"
+}
