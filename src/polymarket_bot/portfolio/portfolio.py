@@ -2,7 +2,12 @@
 
 * Cost basis includes entry fees; exit fees reduce proceeds.
 * Open positions are marked at the *best bid* (liquidation value) — never the
-  mid — so equity, drawdown and daily loss are conservative.
+  mid. ``equity_usd`` is that mark-to-market value (reported).
+* Loss limits use ``risk_equity_usd`` = cash + sum(min(bid value, cost basis)):
+  unrealized losses count in full, unrealized gains never do. Near expiry a
+  binary token's bid can jump between ~0.05 and ~0.99 within seconds; counting
+  such a transient spike in the high-water mark made the drawdown limit trip on
+  noise (found in the synthetic validation run, docs/progress.md).
 * Settlement pays 1 per winning share, 0 per losing share.
 * Any accounting invariant violation raises :class:`InvariantError`; the
   runtime treats it as critical (kill switch).
@@ -79,10 +84,17 @@ class Portfolio:
     last_loss_ms: int | None = None
     current_day: str = ""
     marks: dict[str, Decimal] = field(default_factory=dict)  # token -> last bid used
+    risk_equity_usd: Decimal = ZERO
 
     @classmethod
     def with_cash(cls, cash: Decimal, now_ms: int) -> Portfolio:
-        p = cls(cash_usd=cash, start_of_day_equity_usd=cash, peak_equity_usd=cash, equity_usd=cash)
+        p = cls(
+            cash_usd=cash,
+            start_of_day_equity_usd=cash,
+            peak_equity_usd=cash,
+            equity_usd=cash,
+            risk_equity_usd=cash,
+        )
         p.current_day = _day(now_ms)
         return p
 
@@ -177,15 +189,19 @@ class Portfolio:
         for token, bid in bids.items():
             if token in self.positions and bid is not None:
                 self.marks[token] = bid
-        value = sum(
-            (pos.shares * self.marks.get(tok, ZERO) for tok, pos in self.positions.items()), ZERO
-        )
+        value = ZERO
+        conservative = ZERO
+        for tok, pos in self.positions.items():
+            marked = pos.shares * self.marks.get(tok, ZERO)
+            value += marked
+            conservative += min(marked, pos.cost_basis_usd)
         self.equity_usd = self.cash_usd + value
+        self.risk_equity_usd = self.cash_usd + conservative
         day = _day(now_ms)
         if day != self.current_day:
             self.current_day = day
-            self.start_of_day_equity_usd = self.equity_usd
-        self.peak_equity_usd = max(self.peak_equity_usd, self.equity_usd)
+            self.start_of_day_equity_usd = self.risk_equity_usd
+        self.peak_equity_usd = max(self.peak_equity_usd, self.risk_equity_usd)
 
     @property
     def exposure_usd(self) -> Decimal:
@@ -196,7 +212,7 @@ class Portfolio:
     ) -> PortfolioView:
         return PortfolioView(
             cash_usd=self.cash_usd,
-            equity_usd=self.equity_usd,
+            equity_usd=self.risk_equity_usd,  # conservative: gains only count once realised
             start_of_day_equity_usd=self.start_of_day_equity_usd,
             peak_equity_usd=self.peak_equity_usd,
             positions={

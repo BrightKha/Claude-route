@@ -191,3 +191,21 @@ def test_rate_tracker_windows() -> None:
     later = r.view(T0 + 86_400_000 + 1)
     assert later.submissions_last_day == 1
     assert later.exits_last_minute == 0
+
+
+def test_transient_mark_spike_does_not_raise_the_high_water_mark() -> None:
+    """Regression (synthetic validation): a near-expiry bid spike to 0.99 on a cheap
+    position must not inflate the peak and later trip the drawdown kill switch."""
+    p = Portfolio.with_cash(D("200"), T0)
+    buy = _fill(Side.BUY, "0.23", "46")
+    _apply(p, buy)
+    p.mark({UP: D("0.99")}, T0 + 1)
+    assert p.equity_usd > D("230")  # mark-to-market, reported
+    assert p.risk_equity_usd == p.cash_usd + p.positions[UP].cost_basis_usd
+    assert p.peak_equity_usd == D("200")
+    p.mark({UP: D("0.09")}, T0 + 2)
+    view = p.view(pending_buy_usd=D(0), pending_sell_shares={})
+    cost = p.positions[UP].cost_basis_usd
+    assert view.equity_usd == p.cash_usd + D("0.09") * 46  # unrealised loss counts in full
+    # The drawdown seen by the risk engine is bounded by what the position cost.
+    assert view.peak_equity_usd - view.equity_usd == cost - D("0.09") * 46

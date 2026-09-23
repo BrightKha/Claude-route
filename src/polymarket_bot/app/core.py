@@ -25,7 +25,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 
 from polymarket_bot.audit.audit_log import AuditLog
 from polymarket_bot.config.app_config import AppConfig
@@ -67,6 +67,10 @@ UNRESOLVED_ALERT_MS = 30 * 60_000
 RECONCILE_FAILURES_BEFORE_HALT = 2
 
 
+class SettlementVenue(Protocol):
+    def settle(self, winning_token: str, losing_token: str) -> Decimal: ...
+
+
 @dataclass
 class CoreDeps:
     config: AppConfig
@@ -87,7 +91,7 @@ class CoreDeps:
     reviewer: CandidateReviewer | None = None
     inbox: ProposalInbox | None = None
     recorder: SessionRecorder | None = None
-    settle_venue: Any = None  # PaperExchange in paper/replay (simulated redemption)
+    settle_venue: SettlementVenue | None = None  # paper/replay: simulated redemption
     live_authorization: LiveAuthorization | None = None
     publish_interval_ms: int = 2_000
 
@@ -309,8 +313,8 @@ class TradingCore:
                 )
                 d.state.halt("official outcome inconsistent with the rule", manual_only=True)
             market = tracked.definition
-            winner_token = next(t.token_id for t in market.tokens if t.outcome == tracked.winner)
-            loser_token = market.other(winner_token)
+            winner_token = market.token(tracked.winner).token_id
+            loser_token = market.other(tracked.winner).token_id
             held_winner = self.portfolio.positions.get(winner_token)
             payout = held_winner.shares if held_winner else ZERO
             trades = self.portfolio.settle(cid, tracked.winner, now)
@@ -343,7 +347,7 @@ class TradingCore:
                 equity=self.portfolio.equity_usd,
                 cash=self.portfolio.cash_usd,
                 exposure=self.portfolio.exposure_usd,
-                daily_pnl=self.portfolio.equity_usd - self.portfolio.start_of_day_equity_usd,
+                daily_pnl=self.portfolio.risk_equity_usd - self.portfolio.start_of_day_equity_usd,
             )
 
     def _check_loss_limits(self) -> None:
@@ -719,7 +723,8 @@ class TradingCore:
             ts_ms=now,
             body={
                 "cash_usd": pf.cash_usd,
-                "equity_usd": pf.equity_usd,
+                "equity_usd": pf.equity_usd,  # marked at best bid
+                "risk_equity_usd": pf.risk_equity_usd,  # unrealised gains excluded
                 "exposure_usd": pf.exposure_usd,
                 "positions": [
                     {
@@ -740,7 +745,7 @@ class TradingCore:
             body={
                 "realized_pnl_usd": pf.realized_pnl_usd,
                 "fees_paid_usd": pf.fees_paid_usd,
-                "daily_pnl_usd": pf.equity_usd - pf.start_of_day_equity_usd,
+                "daily_pnl_usd": pf.risk_equity_usd - pf.start_of_day_equity_usd,
                 "closed_trades": len(pf.closed_trades),
                 "consecutive_losses": pf.consecutive_losses,
             },
