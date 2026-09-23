@@ -34,8 +34,10 @@ class RawMessage:
 
 class MarketDiscoveryProvider(Protocol):
     async def fetch_series_events(
-        self, *, series_id: str, closed: bool, limit: int, start_after_ms: int | None
+        self, *, series_id: str, closed: bool, limit: int
     ) -> RawMessage: ...
+
+    async def fetch_events_by_slugs(self, slugs: list[str]) -> RawMessage: ...
 
     async def fetch_market_by_slug(self, slug: str) -> RawMessage: ...
 

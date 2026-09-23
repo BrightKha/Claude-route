@@ -71,6 +71,8 @@ ignore = [
   "PLR0911", "PLR0912", "PLR0915",  # explicit, flat check lists are preferred over clever abstractions
   "RUF001", "RUF002", "RUF003",  # unicode in docs/comments
   "S101",     # asserts allowed (tests + invariants)
+  "TRY300", "TRY301",  # raising inside try for uniform error mapping is intentional
+  "SIM102",   # nested ifs keep validation rules readable
 ]
 
 [tool.ruff.lint.per-file-ignores]
