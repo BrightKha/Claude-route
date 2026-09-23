@@ -1,0 +1,45 @@
+# --- secrets: never commit -------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.keystore
+secrets/
+credentials*.json
+**/private_key*
+**/*mnemonic*
+
+# --- runtime data (may contain account information) -------------------------
+data/*
+!data/.gitkeep
+reports/*
+!reports/.gitkeep
+!reports/README.md
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+incidents/
+KILL_SWITCH
+
+# --- python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# --- editors -------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+.DS_Store

@@ -1,0 +1,119 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "polymarket-bot"
+version = "0.1.0"
+description = "Conservative, fail-closed Polymarket trading system (BTC Up/Down 5m first). DISABLED/PAPER by default."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "Proprietary - internal use" }
+# Core dependencies are deliberately minimal. Each one is justified in docs/research.md §10.
+dependencies = [
+  "pydantic>=2.13,<3",
+  "pydantic-settings>=2.15,<3",
+  "pyyaml>=6.0.3,<7",
+  "httpx>=0.28.1,<1",
+  # polymarket-client pins websockets<16; keep the whole tree on 15.x.
+  "websockets>=15,<16",
+  "numpy>=2.3,<3",
+  "prometheus-client>=0.26,<1",
+]
+
+[project.optional-dependencies]
+# Official unified Polymarket SDK. ONLY imported by adapters/polymarket_live.py.
+live = ["polymarket-client==0.10.0"]
+# Claude API client. ONLY imported by llm/claude_client.py.
+llm = ["anthropic>=1.8,<2"]
+# MCP server exposing a restricted, mostly read-only tool set.
+mcp = ["mcp>=2.2,<3"]
+# Parquet export of analytical datasets.
+analytics = ["pyarrow>=21,<22"]
+
+[project.scripts]
+polymarket-bot = "polymarket_bot.app.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1,<10",
+  "pytest-asyncio>=1.4,<2",
+  "hypothesis>=6.168,<7",
+  "ruff>=0.16,<0.17",
+  "mypy>=2.3,<3",
+  "types-PyYAML>=6.0",
+  "bandit>=1.9,<2",
+  "pip-audit>=2.10,<3",
+  "pre-commit>=4.6,<5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/polymarket_bot"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF", "S", "PT",
+  "RET", "PL", "TRY", "DTZ", "T20", "ASYNC", "PERF", "LOG", "G",
+]
+ignore = [
+  "PLR0913",  # many-argument constructors are explicit by design
+  "PLR2004",  # magic values in comparisons are covered by named config
+  "TRY003",   # long exception messages are useful for operators
+  "PLR0911", "PLR0912", "PLR0915",  # explicit, flat check lists are preferred over clever abstractions
+  "RUF001", "RUF002", "RUF003",  # unicode in docs/comments
+  "S101",     # asserts allowed (tests + invariants)
+  "TRY300", "TRY301",  # raising inside try for uniform error mapping is intentional
+  "SIM102",   # nested ifs keep validation rules readable
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "PLR", "SIM117", "PT011", "PT018", "C408", "DTZ", "N802", "ARG", "TRY301"]
+"scripts/**" = ["T20", "S"]
+"src/polymarket_bot/app/cli.py" = ["T20"]
+"src/polymarket_bot/research/**" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["polymarket_bot"]
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+mypy_path = "src"
+packages = ["polymarket_bot"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["prometheus_client.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "network: requires outbound network to Polymarket (never run in CI by default)",
+  "slow: long-running simulation or backtest tests",
+]
+filterwarnings = ["error"]
+
+# ---------------------------------------------------------------- bandit
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+# B101: asserts are only used for type narrowing of invariants already enforced by
+#       constructors (e.g. OrderIntent.__post_init__); never for runtime validation.
+# B311: `random` is only used for simulation, reconnect jitter and bootstrap resampling;
+#       the bot never generates secrets or keys.
+skips = ["B101", "B311"]

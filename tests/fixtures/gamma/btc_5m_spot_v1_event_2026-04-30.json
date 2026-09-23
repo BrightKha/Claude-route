@@ -1,0 +1,72 @@
+[
+ {
+  "id": "431417",
+  "ticker": "btc-updown-5m-1777562700",
+  "slug": "btc-updown-5m-1777562700",
+  "title": "Bitcoin Up or Down - April 30, 11:25AM-11:30AM ET",
+  "description": "This market will resolve to \"Up\" if the Bitcoin price at the end of the time range specified in the title is greater than or equal to the price at the beginning of that range. Otherwise, it will resolve to \"Down\".\nThe resolution source for this market is information from Chainlink, specifically the BTC/USD data stream available at https://data.chain.link/streams/btc-usd.\nPlease note that this market is about the price according to Chainlink data stream BTC/USD, not according to other sources or spot markets.",
+  "resolutionSource": "https://data.chain.link/streams/btc-usd",
+  "startDate": "2026-04-29T15:37:13.894153Z",
+  "endDate": "2026-04-30T15:30:00Z",
+  "active": true,
+  "closed": true,
+  "archived": false,
+  "restricted": true,
+  "enableOrderBook": true,
+  "negRisk": false,
+  "startTime": "2026-04-30T15:25:00Z",
+  "seriesSlug": "btc-up-or-down-5m",
+  "closedTime": "2026-04-30T15:31:26Z",
+  "eventMetadata": {
+   "finalPrice": 76474.488985,
+   "priceToBeat": 76416.51228783683
+  },
+  "version": "v1",
+  "markets": [
+   {
+    "id": "2116441",
+    "question": "Bitcoin Up or Down - April 30, 11:25AM-11:30AM ET",
+    "conditionId": "0x7a2e7bc5d04a7ecefe55d4f7cdaa7632fbb6d2822ae69d9f27177d2d9da7bcd6",
+    "slug": "btc-updown-5m-1777562700",
+    "resolutionSource": "https://data.chain.link/streams/btc-usd",
+    "endDate": "2026-04-30T15:30:00Z",
+    "description": "This market will resolve to \"Up\" if the Bitcoin price at the end of the time range specified in the title is greater than or equal to the price at the beginning of that range. Otherwise, it will resolve to \"Down\".\nThe resolution source for this market is information from Chainlink, specifically the BTC/USD data stream available at https://data.chain.link/streams/btc-usd.\nPlease note that this market is about the price according to Chainlink data stream BTC/USD, not according to other sources or spot markets.",
+    "outcomes": "[\"Up\", \"Down\"]",
+    "outcomePrices": "[\"1\", \"0\"]",
+    "active": true,
+    "closed": true,
+    "closedTime": "2026-04-30 15:31:26+00",
+    "restricted": true,
+    "questionID": "0xedb132e030cdfc49052a6d9798dbac43ec4629d6bc7d17a80c721153662d9df6",
+    "umaEndDate": "2026-04-30T15:31:26Z",
+    "enableOrderBook": true,
+    "orderPriceMinTickSize": 0.01,
+    "orderMinSize": 5,
+    "umaResolutionStatus": "resolved",
+    "clobTokenIds": "[\"69291725015337728262201905066758278129438391452130441075898932492443039691192\", \"81199002389480797801083095138065326418776279913292389270952116955382182189714\"]",
+    "makerBaseFee": 1000,
+    "takerBaseFee": 1000,
+    "acceptingOrders": false,
+    "negRisk": false,
+    "automaticallyResolved": true,
+    "eventStartTime": "2026-04-30T15:25:00Z",
+    "feesEnabled": true,
+    "feeType": "crypto_fees_v2",
+    "feeSchedule": {
+     "exponent": 1,
+     "rate": 0.07,
+     "takerOnly": true,
+     "rebateRate": 0.2
+    },
+    "version": "v1"
+   }
+  ],
+  "series": [
+   {
+    "id": "10684",
+    "slug": "btc-up-or-down-5m",
+    "recurrence": "5m"
+   }
+  ]
+ }
+]
