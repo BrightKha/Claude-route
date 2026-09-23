@@ -120,6 +120,10 @@ class LLMConfig(_Strict):
     debounce_per_market_s: float = Field(60.0, ge=0)
     max_price_move_since_review: Decimal = Field(Decimal("0.02"), ge=0)
     allow_trading_without_llm: bool = True
+    min_approve_confidence: float = Field(0.5, ge=0, le=1, description="Lower => NO_OP")
+    max_retries: int = Field(0, ge=0, le=2, description="SDK retries; decisions are time-bound")
+    cache_write_price_multiplier: Decimal = Field(Decimal("1.25"), ge=1)
+    cache_read_price_multiplier: Decimal = Field(Decimal("0.1"), ge=0)
 
 
 class WatchdogConfig(_Strict):

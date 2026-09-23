@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS equity_marks (
 CREATE TABLE IF NOT EXISTS promotion_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, stage TEXT NOT NULL,
   action TEXT NOT NULL, actor TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS runtime_status (
+  name TEXT PRIMARY KEY, ts_ms INTEGER NOT NULL, body TEXT NOT NULL);
 """
 
 _INBOX_SCHEMA = """
@@ -446,6 +448,30 @@ class StateStore:
     def promotion_events(self) -> list[dict[str, Any]]:
         rows = self._query("SELECT * FROM promotion_events ORDER BY id")
         return [{**dict(r), "body": json.loads(r["body"])} for r in rows]
+
+    # ------------------------------------------------------------ runtime status
+    def publish_status(self, name: str, *, ts_ms: int, body: object) -> None:
+        """Runtime snapshot documents read by the (read-only) MCP server and CLI."""
+        with self._tx() as cur:
+            cur.execute(
+                "INSERT INTO runtime_status(name, ts_ms, body) VALUES (?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET ts_ms = excluded.ts_ms, body = excluded.body",
+                (name, ts_ms, canonical_dumps(body)),
+            )
+
+    def read_status(self, name: str) -> dict[str, Any] | None:
+        rows = self._query("SELECT ts_ms, body FROM runtime_status WHERE name = ?", (name,))
+        if not rows:
+            return None
+        return {"published_ms": rows[0]["ts_ms"], "data": json.loads(rows[0]["body"])}
+
+    def recent_fills(self, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self._query(
+            "SELECT fill_id, condition_id, token_id, outcome, side, price, shares, fee_usd, ts_ms, "
+            "liquidity, source FROM fills ORDER BY ts_ms DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(r) for r in rows]
 
     def recent_risk_decisions(self, limit: int = 20) -> list[dict[str, Any]]:
         rows = self._query("SELECT body FROM risk_decisions ORDER BY ts_ms DESC LIMIT ?", (limit,))

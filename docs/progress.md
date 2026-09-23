@@ -94,7 +94,22 @@ not modelled, the latency distribution is uniform and not fitted to real data.
 
 Test count at end of Phase 6: **366 passing** (ruff, mypy --strict clean).
 
+## Phase 7 — Claude & MCP — DONE (runtime wiring in the next step)
+
+| Component | Status |
+|---|---|
+| `LLMReview` schema (APPROVE/REJECT/NO_OP, override, confidence, thesis, risks, invalidators, exit conditions, max holding) — extra fields refused | IMPLEMENTED, TESTED |
+| Whitelisted `ReviewContext` (numbers only; no wallet/balance/keys/config) | IMPLEMENTED, TESTED |
+| Override can only lower the probability band and edge; size never touched | IMPLEMENTED, TESTED (property test) |
+| Budget: calls/min, calls/hour, spend/day with worst-case pre-reservation, per-market debounce, restart-safe seed | IMPLEMENTED, TESTED |
+| Claude client (anthropic 1.8.0): structured outputs, effort, server-side fallback `default`, refusal/truncation/schema errors => no approval, no SDK retries, cost from usage, prompt secret guard | IMPLEMENTED, TESTED against the real SDK with a mock HTTP transport; **NOT VERIFIED** against the live API (no calls made from this environment) |
+| Reviewer policy (off/advisory/required; approval TTL; price-move invalidation; reject cache; persisted + audited) | IMPLEMENTED, TESTED |
+| MCP server (mcp 2.2.0, stdio): 14 read tools + `request_trade`/`request_close` proposals; read-only DB (`mode=ro` + app guard); refuses to start with secrets in env; outputs redacted; no raw order/withdraw/config/kill-switch tools | IMPLEMENTED, TESTED |
+| HTTP transport for MCP | NOT IMPLEMENTED (refused at startup; stdio only) |
+| Runtime processing of MCP proposals | TODO (runtime step) |
+
 ## Next
 
-Phase 7 (Claude client, budget, reviewer, restricted MCP server), runtime
-orchestration + replay engine + CLI, Phase 8 (validation/backtests), Phase 9 (report).
+Runtime orchestration (decision loop, exits, settlement, watchdog/reconciliation
+wiring, proposal processing), replay engine, CLI, Phase 8 (validation/backtests),
+Phase 9 (report).
