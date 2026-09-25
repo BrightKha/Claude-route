@@ -18,6 +18,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 E18 = Decimal(10) ** 18
+MAX_MESSAGE_KEYS = 32
 TOPIC_SPOT = "crypto_prices_chainlink"
 TOPIC_TWAP60 = "crypto_prices_twap_sixty"
 TOPIC_TWAP30 = "crypto_prices_twap_thirty"
@@ -101,6 +102,8 @@ class ReferencePriceState:
         self.outliers = 0
         self.malformed = 0
         self.publisher_lags_ms: deque[int] = deque(maxlen=200)
+        # Observability only: messages seen per "type|topic|symbol" (bounded).
+        self.message_counts: dict[str, int] = {}
         # EWMA variance of 1-second log returns (per second)
         self._lambda = 0.5 ** (1.0 / vol_halflife_s)
         self._ewma_var: float | None = None
@@ -122,6 +125,7 @@ class ReferencePriceState:
     def _on_message(self, msg: dict[str, Any], received_ms: int) -> int:
         topic = msg.get("topic")
         payload = msg.get("payload")
+        self._count(msg, payload)
         if msg.get("type") != "update" or not isinstance(payload, dict):
             return 0
         try:
@@ -157,6 +161,12 @@ class ReferencePriceState:
         elif topic == TOPIC_SECONDARY and self.secondary_symbol and symbol == self.secondary_symbol:
             return int(self.secondary.add(tick))
         return 0
+
+    def _count(self, msg: dict[str, Any], payload: Any) -> None:
+        symbol = str(payload.get("symbol", "")).lower() if isinstance(payload, dict) else "-"
+        key = f"{msg.get('type')}|{msg.get('topic')}|{symbol}"[:80]
+        if key in self.message_counts or len(self.message_counts) < MAX_MESSAGE_KEYS:
+            self.message_counts[key] = self.message_counts.get(key, 0) + 1
 
     def _plausible(self, prev: Tick | None, tick: Tick, received_ms: int) -> bool:
         if prev is None:

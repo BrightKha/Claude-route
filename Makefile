@@ -6,7 +6,8 @@ INPUT ?= data/synthetic/session
 REPORT ?= reports/backtest
 
 .PHONY: help install lint format typecheck test test-fast security secrets-scan audit check \
-        synth replay backtest walk-forward paper record status live-readiness kill-switch mcp clean
+        synth replay backtest walk-forward paper record status diagnose live-readiness kill-switch \
+        mcp clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -63,6 +64,9 @@ record: ## Record live public data only (no trading)
 
 status: ## Bot status from the local state DB
 	$(PY) -m polymarket_bot.app --config $(CONFIG) status
+
+diagnose: ## Read-only decision-pipeline diagnostic: why (no) trades
+	$(PY) -m polymarket_bot.app --config $(CONFIG) diagnose
 
 live-readiness: ## Print the live-lock checklist (never enables live)
 	$(PY) -m polymarket_bot.app --config configs/live.example.yaml live-readiness

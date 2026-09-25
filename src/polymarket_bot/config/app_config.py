@@ -168,6 +168,9 @@ class MonitoringConfig(_Strict):
     metrics_enabled: bool = False
     metrics_bind: str = "127.0.0.1"
     metrics_port: int = Field(9108, gt=1024, lt=65536)
+    pipeline_log_interval_s: float = Field(
+        60.0, gt=0, description="Period of the INFO decision-pipeline summary (diagnostics)"
+    )
 
 
 class ComplianceConfig(_Strict):

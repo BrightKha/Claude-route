@@ -31,7 +31,9 @@ from polymarket_bot.domain.clock import SystemClock
 from polymarket_bot.domain.types import OrderStatus
 from polymarket_bot.lifecycle.kill_switch import KillSwitch, KillSwitchError
 from polymarket_bot.lifecycle.state_machine import BotStateMachine
+from polymarket_bot.monitoring.diagnose_report import format_diagnostic
 from polymarket_bot.monitoring.logging_setup import setup_logging
+from polymarket_bot.monitoring.pipeline import funnel, iso_ms
 from polymarket_bot.promotion.gates import Evidence, Stage, approval_phrase, evaluate_promotion
 from polymarket_bot.promotion.live_lock import evaluate_live_lock
 from polymarket_bot.security.compliance import compliance_gate
@@ -96,6 +98,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     work = _work_dir(args, config, "replay")
     run = asyncio.run(run_replay(config, Path(args.input), work))
     core = run.assembly.core
+    pipeline = core.pipeline_report(core.d.clock.now_ms())
     _print(
         {
             "synthetic": run.synthetic,
@@ -106,6 +109,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
             "realized_pnl_usd": core.portfolio.realized_pnl_usd,
             "equity_usd": core.portfolio.equity_usd,
             "violations": core.execution.violations,
+            "pipeline": funnel(pipeline["counters"], pipeline["feeds"]),
+            "no_trade_reasons": pipeline["counters"]["no_trade"],
             "work_dir": str(work),
         }
     )
@@ -212,6 +217,54 @@ def cmd_status(args: argparse.Namespace) -> int:
             "audit_log": {"valid": audit_ok, "records": audit_n, "detail": audit_detail},
         }
     )
+    return EXIT_OK
+
+
+def audit_summary(path: Path, last: int = 8) -> dict[str, Any]:
+    """Record kinds and the latest records' kind/time (payloads are not printed)."""
+    kinds: dict[str, int] = {}
+    tail: list[dict[str, Any]] = []
+    if path.exists():
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                kind = str(record.get("kind"))
+                kinds[kind] = kinds.get(kind, 0) + 1
+                entry: dict[str, Any] = {"seq": record.get("seq"), "kind": kind}
+                entry["at"] = iso_ms(record.get("ts_ms"))
+                change = record.get("payload", {}).get("change")
+                if kind == "state_change" and isinstance(change, dict):
+                    entry["change"] = f"{change.get('from_state')} -> {change.get('to_state')}"
+                tail = [*tail[-(last - 1) :], entry]
+    return {"kinds": kinds, "latest": tail}
+
+
+def cmd_diagnose(args: argparse.Namespace) -> int:
+    """Read-only decision-pipeline diagnostic (docs/diagnostics.md)."""
+    config = _config(args)
+    path = _data_dir(args, config) / "state.sqlite"
+    if not path.exists():
+        _print({"state": "no state database", "path": str(path)})
+        return EXIT_OK
+    store = StateStore(path, read_only=True)
+    audit_ok, audit_n, _ = verify_audit_log(path.parent / "audit.jsonl")
+    doc = store.read_status("pipeline")
+    report = {
+        "published_ms": doc["published_ms"] if doc else None,
+        "pipeline": doc["data"] if doc else None,
+        "health": store.read_status("health"),
+        "audit_log": {
+            "valid": audit_ok,
+            "records": audit_n,
+            **audit_summary(path.parent / "audit.jsonl"),
+        },
+    }
+    if args.json:
+        _print(report)
+    else:
+        print(format_diagnostic(report, now_ms=int(time.time() * 1000)))
     return EXIT_OK
 
 
@@ -451,6 +504,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("paper", help="paper trading on live public data").set_defaults(func=cmd_paper)
     sub.add_parser("record", help="record live public data only").set_defaults(func=cmd_record)
     sub.add_parser("status", help="read-only status").set_defaults(func=cmd_status)
+    s = sub.add_parser("diagnose", help="read-only decision-pipeline diagnostic (why no trade)")
+    s.add_argument("--json", action="store_true", help="full machine-readable report")
+    s.set_defaults(func=cmd_diagnose)
     sub.add_parser("live-readiness", help="live-lock checklist").set_defaults(
         func=cmd_live_readiness
     )

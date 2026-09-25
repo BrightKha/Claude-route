@@ -8,11 +8,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from polymarket_bot.app.replay_engine import ReplayRun, run_replay
 from polymarket_bot.audit.audit_log import verify_audit_log
 from polymarket_bot.config.app_config import AppConfig
 from polymarket_bot.config.loader import load_config
+from polymarket_bot.data.replay import iter_messages, open_session
 from polymarket_bot.domain.types import BotState, OrderPurpose
+from polymarket_bot.research.synthetic import SynthParams, generate_session
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -168,3 +172,24 @@ async def test_malformed_and_duplicate_frames_do_not_break_the_pipeline(
     assert run.assembly.hub.stats.malformed_frames > 0
     assert run.assembly.core.execution.violations == []
     assert ("SYNCING", "PAPER") in _transitions(run)
+
+
+def test_regenerating_a_synthetic_session_replaces_it(tmp_path: Path) -> None:
+    """Regression: a second ``make synth`` appended to the first session's part files.
+
+    Replay then failed closed ("sequence not increasing") and ``make backtest`` broke.
+    """
+    params = SynthParams(windows=2, seed=3)
+    first = generate_session(tmp_path, params, "s")
+    n_first = sum(1 for _ in iter_messages(open_session(first)))
+    again = generate_session(tmp_path, params, "s")
+    assert again == first
+    assert sum(1 for _ in iter_messages(open_session(again))) == n_first
+
+    real = tmp_path / "recorded"
+    real.mkdir()
+    (real / "session.json").write_text(json.dumps({"synthetic": False}))
+    (real / "part-0001.jsonl").write_text("{}\n")
+    with pytest.raises(ValueError, match="not a SYNTHETIC session"):
+        generate_session(tmp_path, params, "recorded")
+    assert (real / "part-0001.jsonl").read_text() == "{}\n"  # a real recording is never touched
