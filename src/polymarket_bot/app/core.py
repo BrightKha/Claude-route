@@ -43,6 +43,7 @@ from polymarket_bot.execution.engine import (
 )
 from polymarket_bot.exits.engine import ExitEngine, ExitEvaluation, HeldPosition
 from polymarket_bot.features.btc5m import FeatureVector, compute_features
+from polymarket_bot.lifecycle.halt_journal import HaltJournal
 from polymarket_bot.lifecycle.kill_switch import KillSwitch
 from polymarket_bot.lifecycle.state_machine import BotStateMachine, LiveAuthorization
 from polymarket_bot.llm.reviewer import CandidateReviewer, ReviewVerdict
@@ -69,7 +70,7 @@ from polymarket_bot.signals.edge import EdgeEngine
 from polymarket_bot.storage.sqlite_store import ProposalInbox, StateStore
 from polymarket_bot.strategies.btc_5m.fair_value import FairValueEngine, FairValueEstimate
 from polymarket_bot.watchdog.health import HealthRegistry
-from polymarket_bot.watchdog.watchdog import Watchdog
+from polymarket_bot.watchdog.watchdog import Watchdog, health_summary
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +107,7 @@ class CoreDeps:
     settle_venue: SettlementVenue | None = None  # paper/replay: simulated redemption
     live_authorization: LiveAuthorization | None = None
     publish_interval_ms: int = 2_000
+    halt_journal: HaltJournal | None = None
 
 
 @dataclass
@@ -223,6 +225,7 @@ class TradingCore:
             self._check_loss_limits()
             await self._resolve_unknown()
             await self._maybe_reconcile(now)
+            self._check_price_to_beat_evidence(now)
             self._advance_lifecycle(now)
             await self._exits(now)
             await self._entries(now)
@@ -301,7 +304,12 @@ class TradingCore:
             self.d.store.insert_incident(
                 self.d.clock.now_ms(), "critical", "unknown_order_timeout", {"intents": stuck}
             )
-            self.d.state.halt("order state unknown past timeout", manual_only=True)
+            self.d.state.halt(
+                "order state unknown past timeout",
+                manual_only=True,
+                component="execution",
+                details={"stuck_intents": list(stuck)},
+            )
 
     def _engage_kill(self, reason: str) -> None:
         log.critical("engaging kill switch: %s", reason)
@@ -332,7 +340,12 @@ class TradingCore:
                 d.store.insert_incident(
                     now, "critical", "resolution_anomaly", {"slug": tracked.definition.slug}
                 )
-                d.state.halt("official outcome inconsistent with the rule", manual_only=True)
+                d.state.halt(
+                    "official outcome inconsistent with the rule",
+                    manual_only=True,
+                    component="resolution",
+                    details={"slug": tracked.definition.slug, "winner": tracked.winner},
+                )
             market = tracked.definition
             winner_token = market.token(tracked.winner).token_id
             loser_token = market.other(tracked.winner).token_id
@@ -419,9 +432,39 @@ class TradingCore:
         self.d.store.insert_incident(now, "critical", "reconciliation_mismatch", report)
         if self._recon_failures >= RECONCILE_FAILURES_BEFORE_HALT:
             self.account_anomaly = True
-            self.d.state.halt("reconciliation mismatch (confirmed)", manual_only=True)
+            self.d.state.halt(
+                "reconciliation mismatch (confirmed)",
+                manual_only=True,
+                component="reconciliation",
+                details={
+                    "consecutive_failures": self._recon_failures,
+                    "mismatches": [m.kind for m in report.mismatches][:10],
+                },
+            )
         else:
             self._last_recon_ms = None  # re-check on the next step before escalating
+
+    def _check_price_to_beat_evidence(self, now: int) -> None:
+        """A stream/official price-to-beat mismatch is always an incident; with the
+        stream policy enabled it is also a manual halt (the gate closes at once)."""
+        validator = self.d.hub.ptb_validator
+        if validator is None or not validator.new_mismatches:
+            return
+        slugs, validator.new_mismatches = validator.new_mismatches, []
+        policy = self.d.config.fair_value.stream_price_to_beat_policy
+        self.d.store.insert_incident(
+            now,
+            "critical" if policy != "off" else "warning",
+            "price_to_beat_mismatch",
+            {"slugs": slugs, "policy": policy},
+        )
+        if policy != "off":
+            self.d.state.halt(
+                "price to beat: RTDS TWAP at window start != official value",
+                manual_only=True,
+                component="price_to_beat_validation",
+                details={"slugs": slugs, "policy": policy},
+            )
 
     # ------------------------------------------------------------------ lifecycle
     def _advance_lifecycle(self, now: int) -> None:
@@ -440,11 +483,27 @@ class TradingCore:
             while self._recoveries and now - self._recoveries[0] > HOUR_MS:
                 self._recoveries.popleft()
             if len(self._recoveries) >= d.config.watchdog.max_auto_recoveries_per_hour:
-                d.state.halt("too many automatic recoveries", manual_only=True)
+                d.state.halt(
+                    "too many automatic recoveries",
+                    manual_only=True,
+                    component="lifecycle",
+                    details={
+                        "recoveries_last_hour": len(self._recoveries),
+                        "limit": d.config.watchdog.max_auto_recoveries_per_hour,
+                    },
+                )
                 return
             if not d.watchdog.recovery_blockers():
                 self._recoveries.append(now)
-                d.state.transition(BotState.SYNCING, "auto recovery: blockers cleared")
+                d.state.transition(
+                    BotState.SYNCING,
+                    "auto recovery: blockers cleared",
+                    component="lifecycle",
+                    details={
+                        "halted_reason": d.state.reason,
+                        "recoveries_last_hour": len(self._recoveries),
+                    },
+                )
 
     # ------------------------------------------------------------------ strategy helpers
     def _evaluate(self, snap: MarketSnapshot) -> tuple[FeatureVector, FairValueEstimate]:
@@ -563,7 +622,12 @@ class TradingCore:
             fv, estimate = self._evaluate(snap)
             candidates = self.edge.candidates(snap, fv, estimate, resolution_valid=True)
             self.last_candidates[cid] = candidates
-            pc.observe_evaluation(snap, estimate, candidates)
+            pc.observe_evaluation(
+                snap,
+                estimate,
+                candidates,
+                max_reference_age_ms=d.config.risk.max_reference_age_ms,
+            )
             blocked = no_trade_reason(snap, estimate, candidates)
             if not can_enter:
                 if blocked is None:
@@ -909,6 +973,17 @@ class TradingCore:
             ],
             "tracked_markets": tracked_markets(hub, now),
             "price_to_beat_checks": list(hub.ptb_checks)[-10:],
+            "price_to_beat_validation": (
+                hub.ptb_validator.report() if hub.ptb_validator is not None else None
+            ),
+            "reference": {
+                **hub.reference.diagnostics(now),
+                "dispersion_threshold_bps": self.d.config.market_data.max_source_dispersion_bps,
+            },
+            "liveness": health_summary(self.d.health.snapshot(now)),
+            "halts": list(self.d.halt_journal.history)[-10:]
+            if self.d.halt_journal is not None
+            else [],
         }
 
     def _log_pipeline(self, now: int) -> None:

@@ -185,7 +185,22 @@ See [diagnostics.md](diagnostics.md).
 | `make synth` twice appended to the same session (replay then failed closed: "sequence not increasing") | FIXED (a previous SYNTHETIC session is replaced; a non-synthetic directory is refused), regression test fails on the old code |
 | Corrections (in-window price to beat from RTDS TWAP after evidence; RTDS subscription without `filters` if needed; heartbeats not counted as data) | TODO — proposed only, not implemented |
 
-Test count: **475 passing**; ruff, mypy --strict, bandit, secret scan clean.
+Test count: **475 passing** at that step (503 after the reference-feed work); ruff, mypy --strict, bandit, secret scan clean.
+
+### Reference feeds — "source dispersion" on 954/965 decisions — diagnosed and fixed
+
+| Item | Status |
+|---|---|
+| ROOT CAUSE: legacy RTDS `crypto_prices` (Binance) sends `full_accuracy_value` as a plain decimal; the parser divided it by 1e18 (84186.07 → 8.418607e-14 ⇒ 414462.93 bps) | **VERIFIED** (SDK 0.10/0.11 source, official migration guide, verbatim captured frames; the session's two numbers reproduced exactly) |
+| Per-topic contract (E18 only on Chainlink topics; decimal on Binance), exact field cross-checked against `value` (unit error ⇒ tick rejected, never rescaled) | IMPLEMENTED, TESTED |
+| Subscribe backfill (history) seeds series but never counts as live data; server error envelope, empty frames, symbols case-insensitive | IMPLEMENTED, TESTED |
+| Diagnostics: reference values (raw strings + decoding), normalized values, dispersion pairs, final dispersion; reference counters (messages, updates, valid/stale/missing, dispersion rejects, price to beat verified/unverified) | IMPLEMENTED, TESTED |
+| Liveness separated (socket / heartbeat / any frame / book events / price events / reference ticks per series); watchdog silence uses book events and live spot/TWAP ticks only | IMPLEMENTED, TESTED |
+| Explicit `halt` / `recovery_started` / `recovered` audit events (cause, component, category, condition); HALTS in `diagnose`, also for older logs | IMPLEMENTED, TESTED |
+| Price-to-beat validation: persisted observations, N_WINDOWS / MATCH_COUNT / MAX / P95 / MEAN abs diff, `make ptb-validate` over recordings, policy `off` by default, evidence gate (≥ 100 windows, all matching), mismatch ⇒ incident (+ manual halt if the policy is on) | IMPLEMENTED, TESTED; evidence: 2 live windows matched (reported by the operator) — **NOT VERIFIED** (100 needed) |
+| PolyBolt (new official price channels, SDK 0.11.0): parser/adapter for snapshot + update + seq/dropped + reconnect | IMPLEMENTED, TESTED; **NOT WIRED** (needs CLOB credentials in paper mode and a Pyth-vs-Chainlink spot decision — research §4.2, D11); legacy RTDS removal planned ~2026-10-23 — TODO before then |
+| Synthetic backtest unchanged by all of the above | VERIFIED (27 trades, +64.63 USD, all robustness rows identical) |
+| Why the two HALT→SYNCING→PAPER cycles happened in that session | NOT VERIFIED here (needs that data directory: `make diagnose` → HALTS) |
 
 ## Next (operator)
 

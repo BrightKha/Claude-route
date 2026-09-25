@@ -64,6 +64,8 @@ async def run_replay(
         data_dir=out_dir,
         fsync_audit=False,
         publish_interval_ms=publish_interval_ms,
+        evidence_source=f"replay:{session.path.name}",
+        synthetic=session.synthetic,
     )
     core = asm.core
     paper = asm.paper

@@ -143,12 +143,75 @@ E18 integer string), optionally `crypto_prices` (Binance). Payload
 `timestamp` is the Chainlink observation time (ms). **RTDS has no snapshot,
 history or replay after a disconnect** → gaps must invalidate derived state.
 
-NOT VERIFIED (2026-09-25): the official Python SDK subscribes to these topics
-*without* a `filters` field and filters symbols client-side; our runner sends
-the per-topic `filters` string shown above. Whether the server honours it the
-same way for `crypto_prices_twap_sixty` has not been observed from this
-environment. `make diagnose` prints RTDS messages per `type|topic|symbol` so a
-paper session shows directly whether TWAP ticks arrive (and under which symbol).
+### 4.1 Legacy RTDS price payloads — units per topic (VERIFIED 2026-09-25)
+
+Sources: official SDK `polymarket-client` 0.10.0 and 0.11.0
+(`models/rtds_events.py`: `full_accuracy_value` is decoded as E18 **only** for
+the TWAP topics — signed-integer string required — while Binance and Chainlink
+spot use `value`); the official migration guide (`/migrate/rtds-to-polybolt`:
+"Legacy TWAP frames used `window_s` and an E18 fixed-point price"); verbatim
+frames captured on `wss://ws-live-data.polymarket.com` on 2026-09-05 and
+published in the third-party design note
+`dilettante-trading/polyoxide/docs/superpowers/specs/2026-09-05-rtds-chainlink-twap-design.md`
+(corroborating, not official):
+
+| topic | source | quote | `full_accuracy_value` on updates | backfill points |
+|---|---|---|---|---|
+| `crypto_prices_chainlink` (`btc/usd`) | Chainlink | USD | E18 integer `"79696948174287960000000"` | `{timestamp, value}` |
+| `crypto_prices_twap_sixty` (`btc/usd`, `window_s: 60`) | Chainlink 60 s TWAP | USD | E18 integer | `{timestamp, value, full_accuracy_value}` |
+| `crypto_prices` (`btcusdt`) | Binance | **USDT** | **plain decimal** `"79697.73000000"` | `{timestamp, value}` |
+
+**Bug found by the 2026-09-25 paper session (fixed):** the parser divided every
+`full_accuracy_value` by 1e18, so the Binance price 84186.07 became
+8.418607e-14 and `|ln(spot/secondary)|·1e4` = 414462.93 bps > 50 bps ⇒
+"source dispersion" on 954/965 decisions. Each topic now has an explicit
+contract (`data/reference_prices.py`) and the exact field is cross-checked
+against the float `value` of the same payload (a unit error is rejected, never
+rescaled). The secondary stays in USDT (no conversion; the USDT/USD basis is
+part of the dispersion).
+
+Other observed behaviour (polyoxide note, 2026-09-05; consistent with the
+official client README "initial data dump on connection"): every subscription
+starts with a `type: "subscribe"` backfill (`payload.data`, ~1 min Chainlink,
+~2 min Binance) — used to seed the series, never counted as live data; RTDS
+never answers `PING` (no `PONG`; one empty text frame at connect) — liveness
+must come from data ticks; one unknown topic in a subscribe batch yields zero
+frames for the whole batch plus `{"body":…,"statusCode":401}` (counted as a
+server error); the filter must be compact JSON `{"symbol":"btcusdt"}` (a stray
+space silences updates; our frame is built with compact separators); symbol
+matching is case-insensitive.
+
+### 4.2 PolyBolt replaces RTDS price topics (VERIFIED 2026-09-25, NOT MIGRATED)
+
+Official docs (`/market-data/realtime-data`, `/migrate/rtds-to-polybolt`) and
+SDK 0.11.0 (`_internal/streams/realtime/`, released 2026-09-23):
+
+* endpoint `wss://ws-live-v2.polymarket.com/ws`; frames
+  `{"v":1,"channel","seq","ts","snapshot"?,"dropped"?,"payload"}`; subscribe
+  `{"op":"subscribe","subscriptions":[{"channel","filter":{…}}]}` (filter is a
+  JSON object); a history snapshot per subscription; dense `seq` per channel
+  that resets on reconnect; `dropped` counter;
+* `price.crypto.twap` (`btcusd`, `window_seconds: 60`) = **60 s Chainlink TWAP**
+  (the settlement source); `price.crypto` (`btcusd`) = **Pyth** in USD —
+  migrating Chainlink spot *and* Binance changes the source; no Chainlink spot
+  channel exists on PolyBolt;
+* `full_accuracy_value` is an exact **decimal** string ("Do not apply that E18
+  conversion to PolyBolt's decimal string");
+* **reference-price channels require CLOB API credentials** (`{"op":"auth"}`
+  with apiKey/secret/passphrase, derived from the wallet key);
+* "Deprecated RTDS price topics are planned for removal one month after the
+  0.11.0 release" ⇒ around **2026-10-23**.
+
+Decision (D11): **do not migrate the runtime now.** (1) Paper mode is
+secret-free by design (CLAUDE.md invariant 4); PolyBolt would put
+wallet-derived credentials in the market-data path, which needs an explicit
+security decision (and the operator's credentials). (2) The fair-value model
+reconstructs the Chainlink TWAP from Chainlink spot; after migration the spot
+would be Pyth — a model-input change that needs recorded evidence. A tested
+PolyBolt parser/adapter exists (`data/polybolt.py`, not wired, never sees a
+credential) so the switch is a small, reviewable step once those decisions are
+made. **Deadline risk:** if Polymarket removes the legacy topics before then,
+the reference feed goes silent ⇒ watchdog halt ⇒ NO_TRADE (fail closed).
 
 ## 5. BTC Up/Down 5m — resolution (VERIFIED on real archived markets)
 
@@ -303,6 +366,8 @@ pre-commit 4.6.2.
 | D8 | stdlib `logging` JSON formatter with redaction (no structlog) | One fewer dependency; redaction is centralized. |
 | D9 | Claude called only on high-value events, strict JSON schema, re-validated | Cost control and safety. |
 | D10 | Live gated by compliance + promotion gates + multi-flag lock | Geo restrictions; operator control. |
+| D11 | Reference prices stay on legacy RTDS (public); PolyBolt adapter ready but not wired | PolyBolt needs CLOB credentials and replaces Chainlink spot by Pyth (§4.2); removal planned ~2026-10-23. |
+| D12 | In-window price to beat from the RTDS TWAP tick at window start: policy OFF, evidence-gated (≥ 100 paired windows, all within 0.01 bps) | Gamma publishes it only after the window (§5); 2 live observations matched exactly — not enough. |
 
 ## Sources
 

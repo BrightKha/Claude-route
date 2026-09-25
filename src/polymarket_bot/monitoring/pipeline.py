@@ -97,6 +97,19 @@ class PipelineCounters:
     exit_signals: int = 0
     exit_risk_rejected: int = 0
     trades_decided: int = 0  # decisions that ended in a submitted entry order
+    # Reference data per decision: valid = present and age <= max_reference_age_ms.
+    spot_valid: int = 0
+    spot_stale: int = 0
+    spot_missing: int = 0
+    twap_valid: int = 0
+    twap_stale: int = 0
+    twap_missing: int = 0
+    secondary_valid: int = 0
+    secondary_stale: int = 0
+    secondary_missing: int = 0
+    dispersion_rejects: int = 0
+    price_to_beat_verified: int = 0
+    price_to_beat_unverified: int = 0
     stale_reasons: ReasonCounter = field(default_factory=ReasonCounter)
     fair_value_reasons: ReasonCounter = field(default_factory=ReasonCounter)
     candidate_rejections: ReasonCounter = field(default_factory=ReasonCounter)
@@ -110,8 +123,29 @@ class PipelineCounters:
         snap: MarketSnapshot,
         estimate: FairValueEstimate,
         candidates: list[TradeCandidate],
+        *,
+        max_reference_age_ms: int,
     ) -> None:
         self.features_computed += 1
+        ref = snap.reference
+        for name, value, age in (
+            ("spot", ref.spot, ref.spot_age_ms),
+            ("twap", ref.twap, ref.twap_age_ms),
+            ("secondary", ref.secondary_spot, ref.secondary_age_ms),
+        ):
+            if value is None:
+                state = "missing"
+            elif age is None or age > max_reference_age_ms:
+                state = "stale"
+            else:
+                state = "valid"
+            setattr(self, f"{name}_{state}", getattr(self, f"{name}_{state}") + 1)
+        if any(r.startswith("source dispersion") for r in snap.stale_reasons):
+            self.dispersion_rejects += 1
+        if ref.price_to_beat_verified:
+            self.price_to_beat_verified += 1
+        else:
+            self.price_to_beat_unverified += 1
         if snap.is_fresh:
             self.snapshots_fresh += 1
         else:
@@ -315,6 +349,7 @@ def feed_diagnostics(hub: MarketDataHub) -> dict[str, Any]:
         "rtds_connected": hub.rtds_connected,
         "book_events": {
             "applied": a.applied,
+            "applied_by_type": dict(sorted(a.by_type.items())),
             "ignored_unknown_event": a.ignored_unknown_event,
             "malformed": a.malformed,
             "untracked_asset": a.untracked,
@@ -329,6 +364,14 @@ def feed_diagnostics(hub: MarketDataHub) -> dict[str, Any]:
         },
         "rtds_malformed": ref.malformed,
         "rtds_outliers": ref.outliers,
+        "reference_counters": {
+            "reference_messages": sum(ref.message_counts.values()),
+            "spot_updates": ref.series_stats["spot"].updates,
+            "twap_updates": ref.series_stats["twap60"].updates,
+            "secondary_updates": ref.series_stats["secondary"].updates,
+            "history_points": {s: st.history_points for s, st in ref.series_stats.items()},
+            "rejected": {s: dict(st.rejected) for s, st in ref.series_stats.items()},
+        },
         "clock_drift_ms": hub.drift.estimate_ms(),
         "markets_rejected_by_validation": hub.stats.rejected_markets,
         "market_rejection_reasons": dict(hub.stats.rejection_reasons or {}),

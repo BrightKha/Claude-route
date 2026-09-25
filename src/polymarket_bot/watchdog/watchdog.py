@@ -55,22 +55,38 @@ class WatchdogEvaluator:
             out.append(Anomaly("event_loop_stall", HALT_MANUAL, f"{h.loop_beat_age_s:.1f}s"))
         if not force and not self._trading_active():
             return out
+        # Silence is judged on usable data only: a heartbeat or an unrelated frame
+        # proves the socket is open, not that order books or prices are flowing.
         if not h.market_stream_connected:
             out.append(Anomaly("market_stream_down", HALT_RECOVERABLE, "disconnected"))
-        elif h.market_last_msg_ms is None or (
-            h.now_ms - h.market_last_msg_ms > cfg.max_market_data_silence_s * 1000
-        ):
+        elif _silent(h.now_ms, h.market_last_book_event_ms, cfg.max_market_data_silence_s):
             out.append(
-                Anomaly("market_stream_silent", HALT_RECOVERABLE, f"last={h.market_last_msg_ms}")
+                Anomaly(
+                    "market_stream_silent",
+                    HALT_RECOVERABLE,
+                    "no order-book event: "
+                    + _ages(
+                        h.now_ms,
+                        book=h.market_last_book_event_ms,
+                        frame=h.market_last_msg_ms,
+                        heartbeat=h.market_last_heartbeat_ms,
+                    ),
+                )
             )
         if not h.reference_stream_connected:
             out.append(Anomaly("reference_stream_down", HALT_RECOVERABLE, "disconnected"))
-        elif h.reference_last_msg_ms is None or (
-            h.now_ms - h.reference_last_msg_ms > cfg.max_reference_silence_s * 1000
-        ):
+        elif _silent(h.now_ms, h.reference_last_event_ms, cfg.max_reference_silence_s):
             out.append(
                 Anomaly(
-                    "reference_stream_silent", HALT_RECOVERABLE, f"last={h.reference_last_msg_ms}"
+                    "reference_stream_silent",
+                    HALT_RECOVERABLE,
+                    "no live spot/TWAP tick: "
+                    + _ages(
+                        h.now_ms,
+                        tick=h.reference_last_event_ms,
+                        frame=h.reference_last_msg_ms,
+                        heartbeat=h.reference_last_heartbeat_ms,
+                    ),
                 )
             )
         if h.clock_drift_ms is None:
@@ -90,6 +106,42 @@ class WatchdogEvaluator:
         if h.unhandled_exceptions > 0:
             out.append(Anomaly("unhandled_exception", HALT_MANUAL, f"{h.unhandled_exceptions}"))
         return out
+
+
+def health_summary(h: HealthSnapshot) -> dict[str, object]:
+    """Compact, explicit liveness facts for a halt record (ages in seconds)."""
+
+    def age(ms: int | None) -> float | None:
+        return None if ms is None else round((h.now_ms - ms) / 1000, 3)
+
+    return {
+        "market_socket_connected": h.market_stream_connected,
+        "market_book_event_age_s": age(h.market_last_book_event_ms),
+        "market_price_event_age_s": age(h.market_last_price_event_ms),
+        "market_frame_age_s": age(h.market_last_msg_ms),
+        "market_heartbeat_age_s": age(h.market_last_heartbeat_ms),
+        "reference_socket_connected": h.reference_stream_connected,
+        "reference_tick_age_s": age(h.reference_last_event_ms),
+        "reference_frame_age_s": age(h.reference_last_msg_ms),
+        "reference_series_age_s": {
+            k: age(v) for k, v in sorted(h.reference_series_last_ms.items())
+        },
+        "clock_drift_ms": h.clock_drift_ms,
+        "reconciliation_age_s": age(h.last_reconciliation_ms),
+        "reconciliation_ok": h.last_reconciliation_ok,
+        "unknown_orders": h.unknown_orders,
+    }
+
+
+def _silent(now_ms: int, last_ms: int | None, limit_s: float) -> bool:
+    return last_ms is None or now_ms - last_ms > limit_s * 1000
+
+
+def _ages(now_ms: int, **last: int | None) -> str:
+    return ", ".join(
+        f"{name} {'never' if ms is None else f'{(now_ms - ms) / 1000:.1f}s ago'}"
+        for name, ms in last.items()
+    )
 
 
 CancelAll = Callable[[], Awaitable[bool]]
@@ -156,7 +208,18 @@ class Watchdog:
         elif self._sm.state in (BotState.PAPER, BotState.LIVE, BotState.SYNCING):
             manual = HALT_MANUAL in severities
             self._write_incident("critical" if manual else "warning", "watchdog_halt", body)
-            self._sm.halt(f"watchdog: {summary}", manual_only=manual)
+            self._sm.halt(
+                f"watchdog: {summary}",
+                manual_only=manual,
+                component="watchdog",
+                details={
+                    "anomalies": [
+                        {"code": a.code, "severity": a.severity, "detail": a.detail}
+                        for a in anomalies
+                    ],
+                    "health": health_summary(snap),
+                },
+            )
         if self._cfg.cancel_orders_on_halt and self._cancel_all is not None:
             try:
                 ok = await self._cancel_all()
@@ -212,6 +275,11 @@ class LoopStallDetector:
                 path = self._incident_dir / f"loop_stall_{int(time.time())}.json"
                 path.write_text(canonical_dumps({"loop_beat_age_s": age}), encoding="utf-8")
                 try:
-                    self._sm.halt(f"event loop stalled {age:.1f}s", manual_only=True)
+                    self._sm.halt(
+                        f"event loop stalled {age:.1f}s",
+                        manual_only=True,
+                        component="watchdog.loop_stall",
+                        details={"loop_beat_age_s": round(age, 3), "limit_s": self._stall_s},
+                    )
                 except Exception:  # never let the detector thread die silently
                     log.exception("loop stall halt failed")

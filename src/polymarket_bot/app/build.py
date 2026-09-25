@@ -22,6 +22,7 @@ from polymarket_bot.data.recorder import SessionRecorder
 from polymarket_bot.domain.clock import Clock
 from polymarket_bot.domain.market import OrderBookSnapshot
 from polymarket_bot.domain.types import TradingMode
+from polymarket_bot.lifecycle.halt_journal import HaltJournal
 from polymarket_bot.lifecycle.kill_switch import KillSwitch
 from polymarket_bot.lifecycle.state_machine import BotStateMachine, StateChange
 from polymarket_bot.llm.budget import LLMBudget, day_start_ms
@@ -31,6 +32,7 @@ from polymarket_bot.ports import AccountProvider, TradingProvider
 from polymarket_bot.risk.engine import RiskEngine
 from polymarket_bot.storage.sqlite_store import ProposalInbox, StateStore
 from polymarket_bot.strategies.btc_5m.fair_value import FairValueEngine, LogisticCalibrator
+from polymarket_bot.strategies.btc_5m.ptb_validation import PriceToBeatValidator
 from polymarket_bot.watchdog.health import HealthRegistry
 from polymarket_bot.watchdog.watchdog import Watchdog
 
@@ -64,6 +66,8 @@ def assemble(
     publish_interval_ms: int = 2_000,
     live_venue: Any = None,
     live_cash_usd: Decimal | None = None,
+    evidence_source: str | None = None,
+    synthetic: bool = False,
 ) -> Assembly:
     if (mode is TradingMode.LIVE) != (live_venue is not None) or mode is TradingMode.DISABLED:
         raise ValueError(f"invalid assembly for mode {mode}")
@@ -88,6 +92,8 @@ def assemble(
             recorder.record_bot("state_change", change)
 
     state.subscribe(persist)
+    halt_journal = HaltJournal(audit)
+    state.subscribe(halt_journal)
     kill_switch = KillSwitch(data_dir, store, state, audit, clock)
     small_live = (
         mode is TradingMode.LIVE and config.promotion_stage_required_for_live == "SMALL_LIVE"
@@ -97,6 +103,13 @@ def assemble(
         log.warning("risk policy: %s", note)
     risk = RiskEngine(policy, policy_hash(policy), clock)
     hub = MarketDataHub(config, clock, health)
+    hub.ptb_validator = PriceToBeatValidator(
+        config.fair_value,
+        source=evidence_source or mode.value,
+        synthetic=synthetic,
+        sink=None if synthetic else store.insert_ptb_observation,
+    )
+    hub.ptb_validator.seed(store.ptb_observations())
 
     def book_source(token: str) -> OrderBookSnapshot | None:
         book = hub.books.get(token)
@@ -166,6 +179,7 @@ def assemble(
         recorder=recorder,
         settle_venue=paper,  # None in live: redemption happens on-chain, outside the bot
         publish_interval_ms=publish_interval_ms,
+        halt_journal=halt_journal,
     )
     return Assembly(
         core=TradingCore(deps),

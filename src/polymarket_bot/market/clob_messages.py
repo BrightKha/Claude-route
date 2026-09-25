@@ -9,7 +9,7 @@ invalidated by the caller.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -91,6 +91,16 @@ class ApplyStats:
     malformed: int = 0
     untracked: int = 0
     resolved_markets: list[tuple[str, str | None]] | None = None
+    # Observability: events that touched a tracked book or market, by type.
+    by_type: dict[str, int] = field(default_factory=dict)
+
+    def count(self, etype: str) -> None:
+        self.applied += 1
+        self.by_type[etype] = self.by_type.get(etype, 0) + 1
+
+
+BOOK_EVENTS = frozenset({"book", "price_change"})  # mutate the order book
+PRICE_EVENTS = frozenset({"last_trade_price", "best_bid_ask", "tick_size_change"})
 
 
 def apply_market_event(
@@ -126,7 +136,7 @@ def apply_market_event(
             )
             if event.get("last_trade_price") not in (None, ""):
                 book.last_trade_price = dec(event["last_trade_price"], "last_trade_price")
-            stats.applied += 1
+            stats.count("book")
         elif etype == "price_change":
             changes = event.get("price_changes")
             if not isinstance(changes, list):
@@ -157,7 +167,7 @@ def apply_market_event(
                     stats.malformed += 1
                     continue
                 echoes[token] = (ch.get("best_bid"), ch.get("best_ask"))
-                stats.applied += 1
+                stats.count("price_change")
             for token, (bb, ba) in echoes.items():
                 books[token].check_crossed()  # once per event, after all its levels
                 try:
@@ -174,14 +184,14 @@ def apply_market_event(
                 stats.untracked += 1
                 return ts_seen
             book.set_tick_size(dec(event.get("new_tick_size"), "new_tick_size"))
-            stats.applied += 1
+            stats.count("tick_size_change")
         elif etype == "last_trade_price":
             book = books.get(str(event.get("asset_id") or ""))
             if book is None:
                 stats.untracked += 1
                 return ts_seen
             book.last_trade_price = dec(event.get("price"), "price")
-            stats.applied += 1
+            stats.count("last_trade_price")
         elif etype == "market_resolved":
             if stats.resolved_markets is None:
                 stats.resolved_markets = []
@@ -189,9 +199,9 @@ def apply_market_event(
             stats.resolved_markets.append(
                 (str(event.get("market") or ""), str(winner) if winner else None)
             )
-            stats.applied += 1
+            stats.count("market_resolved")
         else:  # best_bid_ask / new_market: informational only
-            stats.applied += 1
+            stats.count(str(etype))
     except MessageError:
         stats.malformed += 1
         token = str(event.get("asset_id") or "")

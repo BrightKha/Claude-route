@@ -29,7 +29,7 @@ from polymarket_bot.promotion.live_lock import evaluate_live_lock, expected_live
 from polymarket_bot.reconciliation.reconciler import LocalState, Reconciler
 from polymarket_bot.security.compliance import attestation_check, interpret_geoblock_payload
 from polymarket_bot.watchdog.health import HealthRegistry
-from polymarket_bot.watchdog.watchdog import Watchdog
+from polymarket_bot.watchdog.watchdog import Watchdog, WatchdogEvaluator
 
 D = Decimal
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -105,10 +105,14 @@ def test_settled_tokens_can_be_ignored():
 
 # ------------------------------------------------------------------ watchdog
 def _healthy_registry(now_ms):
+    """Healthy = sockets open AND usable data flowing (book events, live spot/TWAP ticks)."""
     reg = HealthRegistry()
     reg.beat_loop()
     reg.market_stream(connected=True, msg_ms=now_ms - 100)
+    reg.market_book_event(now_ms - 100)
     reg.reference_stream(connected=True, msg_ms=now_ms - 100)
+    reg.reference_event("spot", now_ms - 100)
+    reg.reference_event("twap60", now_ms - 100)
     reg.reconciliation(ts_ms=now_ms - 1000, ok=True)
     reg.clock_drift(10)
     return reg
@@ -152,6 +156,26 @@ async def test_watchdog_ws_down_halts_recoverably_and_cancels_once():
     await wd.check_once()  # edge-triggered: no repeated action
     assert cancels == [1]
     assert {a.code for a in wd.recovery_blockers()} == {"market_stream_down"}
+
+
+def test_heartbeats_and_unrelated_frames_do_not_prove_data_flow():
+    """Regression: PONG heartbeats refreshed "last message", hiding a silent book feed."""
+    now = 10_000_000
+    reg = _healthy_registry(now)
+    stale = now - 30_000
+    reg.market_book_event(stale)
+    reg.market_stream(connected=True, msg_ms=now - 50)  # frames still arrive...
+    reg.market_heartbeat(now - 50)  # ...and heartbeats too
+    reg.reference_event("spot", stale)
+    reg.reference_event("twap60", stale)
+    reg.reference_event("secondary", now - 50)  # the cross-check source is not enough
+    reg.reference_stream(connected=True, msg_ms=now - 50)
+    evaluator = WatchdogEvaluator(WatchdogConfig(), trading_active=lambda: True)
+    anomalies = {a.code: a.detail for a in evaluator.evaluate(reg.snapshot(now))}
+    assert set(anomalies) == {"market_stream_silent", "reference_stream_silent"}
+    assert "book 30.0s ago" in anomalies["market_stream_silent"]
+    assert "heartbeat 0.1s ago" in anomalies["market_stream_silent"]
+    assert "tick 30.0s ago" in anomalies["reference_stream_silent"]
 
 
 @pytest.mark.parametrize(

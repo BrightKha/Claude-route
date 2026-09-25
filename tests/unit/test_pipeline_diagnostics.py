@@ -282,9 +282,46 @@ def test_diagnose_cli_is_read_only_and_reports_the_blocker(
     assert "btc-updown-5m-1790127600" in text
     assert f"Up={UP}" in text
     assert "state_change" in text
+    for section in (
+        "REFERENCE FEEDS",
+        "dispersion final",
+        "REFERENCE COUNTERS",
+        "LIVENESS",
+        "PRICE_TO_BEAT_VALIDATION",
+        "N_WINDOWS",
+        "HALTS",
+    ):
+        assert section in text, section
 
     assert main([*args, "--json"]) == EXIT_OK
     report = json.loads(capsys.readouterr().out)
     assert report["pipeline"]["counters"]["decisions"] == 1
     assert report["audit_log"]["kinds"]["core_start"] == 1
     assert (tmp_path / "audit.jsonl").read_bytes() == before  # nothing written
+
+
+async def test_live_binance_frame_no_longer_trips_the_dispersion_check(tmp_path: Path) -> None:
+    """Regression of the 2026-09-25 session: 954/965 decisions were "source dispersion"."""
+    now = T0 + 120_000
+    asm = _paper_core(tmp_path, now)
+    _feed_running_window(asm.hub, now, official_ptb=PTB)
+    binance = {
+        "topic": "crypto_prices",
+        "type": "update",
+        "timestamp": now - 250,
+        "payload": {
+            "symbol": "btcusdt",
+            "timestamp": now - 300,
+            "value": 86705.12,
+            "full_accuracy_value": "86705.12000000",  # plain decimal on this topic
+        },
+    }
+    asm.hub.on_raw(_raw("rtds", "ws_frame", json.dumps(binance), now - 200))
+    await asm.core.step()
+    c = asm.core.pipeline.as_dict(now)
+    assert c["dispersion_rejects"] == 0
+    assert c["secondary_valid"] == 1 and c["spot_valid"] == 1 and c["twap_valid"] == 1
+    assert c["price_to_beat_verified"] == 1
+    ref = asm.core.pipeline_report(now)["reference"]
+    assert ref["reference_values"]["secondary"]["value"] == 86705.12
+    assert ref["dispersion_final_bps"] == pytest.approx(0.59, abs=0.01)
