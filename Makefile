@@ -47,31 +47,31 @@ synth: ## Generate a SYNTHETIC dataset (for pipeline validation only)
 	$(PY) -m polymarket_bot.app synth --out $(INPUT) --windows 288 --seed 7
 
 replay: ## Replay a recorded/synthetic session through the paper exchange
-	$(PY) -m polymarket_bot.app replay --config $(CONFIG) --input $(INPUT)
+	$(PY) -m polymarket_bot.app --config $(CONFIG) replay --input $(INPUT)
 
 backtest: ## Backtest + robustness report
-	$(PY) -m polymarket_bot.app backtest --config $(CONFIG) --input $(INPUT) --report $(REPORT) --robustness
+	$(PY) -m polymarket_bot.app --config $(CONFIG) backtest --input $(INPUT) --report $(REPORT) --robustness
 
 walk-forward: ## Walk-forward calibration study
-	$(PY) -m polymarket_bot.app walk-forward --config $(CONFIG) --input $(INPUT) --report $(REPORT)
+	$(PY) -m polymarket_bot.app --config $(CONFIG) walk-forward --input $(INPUT) --report $(REPORT)
 
 paper: ## Paper trading on live public data (needs network access to Polymarket)
-	$(PY) -m polymarket_bot.app paper --config $(CONFIG)
+	$(PY) -m polymarket_bot.app --config $(CONFIG) paper
 
 record: ## Record live public data only (no trading)
-	$(PY) -m polymarket_bot.app record --config $(CONFIG)
+	$(PY) -m polymarket_bot.app --config $(CONFIG) record
 
 status: ## Bot status from the local state DB
-	$(PY) -m polymarket_bot.app status --config $(CONFIG)
+	$(PY) -m polymarket_bot.app --config $(CONFIG) status
 
 live-readiness: ## Print the live-lock checklist (never enables live)
-	$(PY) -m polymarket_bot.app live-readiness --config configs/live.example.yaml
+	$(PY) -m polymarket_bot.app --config configs/live.example.yaml live-readiness
 
 kill-switch: ## Engage the kill switch immediately
-	$(PY) -m polymarket_bot.app kill-switch engage --reason "manual via make" --config $(CONFIG)
+	$(PY) -m polymarket_bot.app --config $(CONFIG) kill-switch engage --reason "manual via make"
 
 mcp: ## Run the restricted MCP server over stdio
-	$(PY) -m polymarket_bot.app mcp-server --config $(CONFIG)
+	$(PY) -m polymarket_bot.app --config $(CONFIG) mcp-server
 
 clean: ## Remove caches
 	rm -rf .mypy_cache .ruff_cache .pytest_cache .hypothesis
