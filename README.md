@@ -52,6 +52,7 @@ make walk-forward
 # Paper trading on live public data (needs network access to Polymarket)
 make paper                   # or: python -m polymarket_bot.app --mode paper
 make status                  # read-only status from the local state DB
+make diagnose                # read-only decision-pipeline report: why (no) trades (docs/diagnostics.md)
 make kill-switch             # engage the kill switch immediately
 
 # Restricted MCP server for Claude (stdio; read-only + proposals)
@@ -94,6 +95,7 @@ tests/              unit, integration, replay, risk, execution, security
 
 * [docs/progress.md](docs/progress.md) — what is IMPLEMENTED / TESTED / VERIFIED / NOT VERIFIED / TODO
 * [docs/final-report.md](docs/final-report.md) — engineering report
+* [docs/diagnostics.md](docs/diagnostics.md) — decision-pipeline counters, `make diagnose`, the 2026-09-25 zero-trade diagnosis
 * [docs/research.md](docs/research.md) — verified external facts (APIs, fees, resolution, geo)
 * [docs/architecture.md](docs/architecture.md) · [docs/trading.md](docs/trading.md) ·
   [docs/risk.md](docs/risk.md) · [docs/security.md](docs/security.md) ·

@@ -143,6 +143,13 @@ E18 integer string), optionally `crypto_prices` (Binance). Payload
 `timestamp` is the Chainlink observation time (ms). **RTDS has no snapshot,
 history or replay after a disconnect** → gaps must invalidate derived state.
 
+NOT VERIFIED (2026-09-25): the official Python SDK subscribes to these topics
+*without* a `filters` field and filters symbols client-side; our runner sends
+the per-topic `filters` string shown above. Whether the server honours it the
+same way for `crypto_prices_twap_sixty` has not been observed from this
+environment. `make diagnose` prints RTDS messages per `type|topic|symbol` so a
+paper session shows directly whether TWAP ticks arrive (and under which symbol).
+
 ## 5. BTC Up/Down 5m — resolution (VERIFIED on real archived markets)
 
 Discovery: series id `10684`, slug `btc-up-or-down-5m`; event slug
@@ -175,11 +182,42 @@ Verified on 11 consecutive resolved markets (fixture
 - `finalPrice(N) == priceToBeat(N+1)` exactly — **11/11** (consistent with both
   values coming from the same TWAP feed at window boundaries).
 - Ties resolve **Up** (`≥`).
-- `eventMetadata.priceToBeat` appears only after the window starts;
+- ~~`eventMetadata.priceToBeat` appears only after the window starts~~
+  **CORRECTED 2026-09-25 (live observation, see below): it appears only
+  after the window has ENDED.** The archived fixture could not show this (all
+  its markets were already resolved).
   `finalPrice` can lag the resolution (one market had `outcomePrices`
   `["0","1"]` and no `finalPrice` yet) → the adapter treats resolution as known
   only from `closed` + `umaResolutionStatus == "resolved"` + `outcomePrices`.
 - Resolution happened 53–90 s after `endDate` (`closedTime`).
+
+**Live observation 2026-09-25 (public Gamma `/events?slug=…`, read-only,
+02:44–02:50 UTC; VERIFIED on 3 consecutive windows):**
+
+| window (UTC) | running window | ~2.5 min after end | ~5 min after end |
+|---|---|---|---|
+| `btc-updown-5m-1790304000` (02:40–02:45) | no `eventMetadata` (at +275 s) | no `eventMetadata`\* | `{"priceToBeat": 84418.21618781498}` (event `updatedAt` 02:46:53, `closedTime` 02:45:53) |
+| `btc-updown-5m-1790304300` (02:45–02:50) | no `eventMetadata` (at +44 s and +153 s) | — | — |
+| `btc-updown-5m-1790303700` (02:35–02:40) | — | — | `{"priceToBeat": 84634.68903016155, "finalPrice": 84418.21618781498}` |
+
+\* that response still showed `closed=false` after `closedTime`, i.e. it was
+served from a cache; Gamma responses can lag by a minute or more.
+
+Consequences: (1) during a running window Gamma never provides the official
+price to beat, so a bot that requires it (`price_to_beat_verified`) can never
+trade — this is the root cause of the zero-trade paper session of
+2026-09-25 (docs/diagnostics.md); (2) `priceToBeat(N) == finalPrice(N-1)` held
+again (84418.216…, 84634.689…), but `finalPrice(N-1)` is published even later,
+so it is no in-window substitute either; (3) the only in-window candidate is
+the RTDS `crypto_prices_twap_sixty` tick at the window start — **NOT VERIFIED**
+to equal `priceToBeat` (the paper runner now records the comparison:
+`MarketDataHub.ptb_checks`, shown by `make diagnose`).
+
+The polymarket.com web endpoint
+`/api/crypto/crypto-price?symbol=BTC&eventStartTime=…&variant=fiveminute&endDate=…`
+(undocumented) returned for 02:35–02:40 `openPrice 84606.43`,
+`closePrice 84421.95`, i.e. **not** the settlement values (Gamma: 84634.69 /
+84418.22, 3.3 bps apart) — it must not be used as the price to beat.
 
 **Irreducible uncertainty (official docs):** *"Chainlink does not currently
 publish the custom feed's sampling boundaries, weighting, rounding, or

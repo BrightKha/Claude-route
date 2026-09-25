@@ -44,6 +44,7 @@ CALLS = _cli_calls()
 def test_all_cli_targets_are_covered() -> None:
     targets = {t for t, _ in CALLS}
     expected = {"synth", "replay", "backtest", "walk-forward", "paper", "record", "status"}
+    expected |= {"diagnose"}
     assert expected | {"live-readiness", "kill-switch", "mcp"} <= targets
 
 

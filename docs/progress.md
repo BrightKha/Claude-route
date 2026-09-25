@@ -162,6 +162,31 @@ validation. Dockerfile / docker-compose written, **not built** here.
 
 Final test count: **453 passing**; ruff, mypy --strict, bandit, secret scan clean.
 
+## Operations — 2026-09-25
+
+### Makefile argument order (fixed, commit e45da31)
+Global CLI options (`--config`) were placed after the subcommand, so
+`make backtest` failed ("unrecognized arguments"). Fixed for every target;
+`tests/unit/test_makefile.py` parses every Makefile CLI line with the real
+parser. IMPLEMENTED, TESTED.
+
+### Zero paper trades in a 20-minute live paper session — diagnosed
+See [diagnostics.md](diagnostics.md).
+
+| Item | Status |
+|---|---|
+| Decision-pipeline counters (funnel market updates → decisions → features → fair value → candidates → Risk Engine → orders → fills → exits; NO_TRADE reason per decision = first blocking stage; reason counters) | IMPLEMENTED, TESTED |
+| Per-market selection diagnostics (slug, ids, tokens, window, time left, book per token, reference feeds + ages, price to beat and its source, resolution, fair value, candidates) | IMPLEMENTED, TESTED |
+| `pipeline` status document, `make diagnose` / `diagnose --json` (read-only), periodic INFO summary (`monitoring.pipeline_log_interval_s`), DEBUG per decision, `pipeline_summary` recording event, funnel in `replay` output | IMPLEMENTED, TESTED |
+| Feed evidence: messages per `source:kind` (heartbeats separated), RTDS messages per `type\|topic\|symbol`; official-vs-RTDS price-to-beat checks (discovery re-queries ended markets until Gamma publishes it) | IMPLEMENTED, TESTED; **NOT VERIFIED** on live data (runs on the operator's machine) |
+| Diagnostics never change decisions | VERIFIED on the synthetic day: backtest + all 6 robustness rows identical to validation.md |
+| Root cause: Gamma publishes `priceToBeat` only after the window ends ⇒ never verified in-window ⇒ fair value never computed ⇒ every decision NO_TRADE (integration problem) | **VERIFIED** on live public Gamma data (3 consecutive windows, research §5); the resulting 0-trade funnel is reproduced by a test with real payload shapes; the live `make diagnose` output is **NOT VERIFIED** yet |
+| Synthetic generator publishes `priceToBeat` from the window start (encodes the wrong assumption; that is why synthetic runs trade) | FOUND; NOT CHANGED (would change the synthetic baseline) — TODO with the price-to-beat fix |
+| `make synth` twice appended to the same session (replay then failed closed: "sequence not increasing") | FIXED (a previous SYNTHETIC session is replaced; a non-synthetic directory is refused), regression test fails on the old code |
+| Corrections (in-window price to beat from RTDS TWAP after evidence; RTDS subscription without `filters` if needed; heartbeats not counted as data) | TODO — proposed only, not implemented |
+
+Test count: **475 passing**; ruff, mypy --strict, bandit, secret scan clean.
+
 ## Next (operator)
 
 Record and paper-trade on real data from an eligible jurisdiction, then follow

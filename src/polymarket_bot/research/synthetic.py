@@ -399,12 +399,33 @@ class _Generator:
             del self.all_spots[t]
 
 
+def _clear_previous_synthetic(directory: Path) -> None:
+    """Replace an earlier SYNTHETIC session; never touch anything else.
+
+    The recorder appends to existing part files, so regenerating into the same
+    directory used to concatenate two sessions (replay then fails closed with
+    "sequence not increasing").
+    """
+    if not directory.exists() or not any(directory.iterdir()):
+        return
+    meta_path = directory / "session.json"
+    try:
+        synthetic = json.loads(meta_path.read_text(encoding="utf-8")).get("synthetic") is True
+    except (OSError, ValueError):
+        synthetic = False
+    if not synthetic:
+        raise ValueError(f"refusing to overwrite {directory}: not a SYNTHETIC session")
+    for path in [*directory.glob("part-*.jsonl"), meta_path, directory / "synthetic_truth.json"]:
+        path.unlink(missing_ok=True)
+
+
 def generate_session(out_dir: Path, params: SynthParams, session_id: str | None = None) -> Path:
     """Write a SYNTHETIC session directory and return its path."""
     gen = _Generator(params)
     gen.run()
     gen.out.sort(key=lambda x: (x[0], x[1]))
     sid = session_id or f"synthetic-{params.seed}-{params.start_ms // 1000}-{params.windows}w"
+    _clear_previous_synthetic(out_dir / sid)
     recorder = SessionRecorder(out_dir, sid, SimulatedClock(gen.out[0][0]), synthetic=True)
     for t, _, src, kind, payload in gen.out:
         recorder.record_raw(RawMessage(src, kind, payload, t, t * 1_000_000))

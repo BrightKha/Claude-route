@@ -2,8 +2,11 @@
 
 Slugs for the current and upcoming windows are derived from the clock, but a
 market is only tracked after the resolution adapter validated its full payload
-(``MarketDataHub._on_gamma``). Ended-but-unresolved markets are re-queried
-until their official outcome is known (for settlement).
+(``MarketDataHub._on_gamma``). Ended markets are re-queried until their
+official outcome is known (for settlement) and until Gamma published their
+official price to beat (observability only: ``MarketDataHub.ptb_checks``
+compares it with the RTDS TWAP; see docs/diagnostics.md). Both stop after
+``UNRESOLVED_LOOKBACK_MS``.
 """
 
 from __future__ import annotations
@@ -27,7 +30,8 @@ def discovery_slugs(now_ms: int, hub: MarketDataHub, config: MarketDataConfig) -
         start += WINDOW_MS
     for tracked in hub.markets.values():
         d = tracked.definition
-        if tracked.winner is None and now_ms - UNRESOLVED_LOOKBACK_MS <= d.window_end_ms <= now_ms:
+        pending = tracked.winner is None or tracked.official_price_to_beat is None
+        if pending and now_ms - UNRESOLVED_LOOKBACK_MS <= d.window_end_ms <= now_ms:
             slugs.append(d.slug)
     return list(dict.fromkeys(slugs))[:MAX_SLUGS_PER_REQUEST]
 

@@ -47,7 +47,19 @@ from polymarket_bot.lifecycle.kill_switch import KillSwitch
 from polymarket_bot.lifecycle.state_machine import BotStateMachine, LiveAuthorization
 from polymarket_bot.llm.reviewer import CandidateReviewer, ReviewVerdict
 from polymarket_bot.llm.schemas import build_review_context
-from polymarket_bot.market.hub import MarketDataHub
+from polymarket_bot.market.hub import MarketDataHub, TrackedMarket
+from polymarket_bot.monitoring.pipeline import (
+    PipelineCounters,
+    classify_entry_result,
+    explain_zeros,
+    feed_diagnostics,
+    market_diagnostic,
+    market_line,
+    no_trade_reason,
+    summary_line,
+    tracked_markets,
+    verdict,
+)
 from polymarket_bot.portfolio.portfolio import ClosedTrade, InvariantError, Portfolio
 from polymarket_bot.ports import AccountProvider, RawMessage, TradingProvider
 from polymarket_bot.reconciliation.reconciler import LocalState, Reconciler
@@ -166,6 +178,10 @@ class TradingCore:
         self._review_tasks: set[asyncio.Task[None]] = set()
         self.last_candidates: dict[str, list[TradeCandidate]] = {}
         self._outcome_by_token: dict[str, str] = {}
+        # Observability only (docs/diagnostics.md): no decision reads these.
+        self.pipeline = PipelineCounters(started_ms=deps.clock.now_ms())
+        self.market_diag: dict[str, dict[str, Any]] = {}
+        self._last_pipeline_log_ms: int | None = None
 
     # ------------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -212,6 +228,7 @@ class TradingCore:
             await self._entries(now)
             await self._proposals(now)
             self._publish(now)
+            self._log_pipeline(now)
             d.health.decision(now)
         except (InvariantError, InvariantViolationError) as exc:
             self._engage_kill(f"invariant violation: {exc}")
@@ -241,6 +258,10 @@ class TradingCore:
             fill, market_slug=record.intent.market_slug, window_end_ms=end_ms
         )
         self._outcome_by_token[fill.token_id] = fill.outcome
+        if record.intent.purpose is OrderPurpose.ENTRY:
+            self.pipeline.fills_entry += 1
+        else:
+            self.pipeline.fills_exit += 1
         meta = self._intent_meta.pop(record.intent.intent_id, None)
         if meta is not None:  # first fill of an entry order
             self._entry_meta.setdefault(fill.token_id, meta)
@@ -462,6 +483,7 @@ class TradingCore:
             snap = d.hub.snapshot(pos.condition_id) if tracked else None
             estimate = self._evaluate(snap)[1] if snap else None
             held = self._held(token)
+            self.pipeline.positions_evaluated_for_exit += 1
             evaluation = self.exits.evaluate(
                 held,
                 snap,
@@ -492,6 +514,7 @@ class TradingCore:
         d = self.d
         if evaluation.action != "EXIT" or evaluation.signal is None or snap is None:
             return None
+        self.pipeline.exit_signals += 1
         ctx = ExitContext(
             mode=d.mode,
             bot_state=d.state.state,
@@ -505,6 +528,7 @@ class TradingCore:
         d.store.insert_risk_decision(decision)
         if not decision.allowed:
             self._count_reject(decision.reasons[0] if decision.reasons else "exit rejected")
+            self.pipeline.exit_risk_rejected += 1
             return decision
         await self._execute(decision, snap.market, outcome, OrderPurpose.EXIT)
         return decision
@@ -512,21 +536,96 @@ class TradingCore:
     # ------------------------------------------------------------------ entries
     async def _entries(self, now: int) -> None:
         d = self.d
+        pc = self.pipeline
         can_enter = d.state.can_open_positions() and not d.kill_switch.is_engaged()
-        for tracked in d.hub.active_markets(now):
+        active = d.hub.active_markets(now)
+        pc.entry_passes += 1
+        if not active:
+            pc.steps_without_active_market += 1
+        self.market_diag = {
+            cid: diag for cid, diag in self.market_diag.items() if diag["window_end_ms"] > now
+        }
+        for tracked in active:
             cid = tracked.definition.condition_id
+            pc.decisions += 1
             snap = d.hub.snapshot(cid)
             if snap is None:
+                pc.snapshots_missing += 1
+                self._record_decision(
+                    tracked,
+                    snap=None,
+                    estimate=None,
+                    candidates=[],
+                    blocked="no market snapshot",
+                    now=now,
+                )
                 continue
             fv, estimate = self._evaluate(snap)
             candidates = self.edge.candidates(snap, fv, estimate, resolution_valid=True)
             self.last_candidates[cid] = candidates
+            pc.observe_evaluation(snap, estimate, candidates)
+            blocked = no_trade_reason(snap, estimate, candidates)
             if not can_enter:
+                if blocked is None:
+                    state = "kill switch engaged" if d.kill_switch.is_engaged() else None
+                    blocked = f"bot state: {state or d.state.state.value}"
+                    passing = sum(c.passes_filters for c in candidates)
+                    pc.candidates_blocked_by_state += passing
+                    pc.blocked_states.add(blocked, passing)
+                self._record_decision(
+                    tracked,
+                    snap=snap,
+                    estimate=estimate,
+                    candidates=candidates,
+                    blocked=blocked,
+                    now=now,
+                )
                 continue
+            results: list[str] = []
             for cand in candidates:
                 if cand.passes_filters:
                     self.stats.candidates_passing += 1
-                    await self._try_entry(cand, snap, fv, source="strategy")
+                    results.append(await self._try_entry(cand, snap, fv, source="strategy"))
+            for result in results:
+                blocked = classify_entry_result(result)
+                if blocked is None:
+                    pc.trades_decided += 1
+                    break
+            self._record_decision(
+                tracked,
+                snap=snap,
+                estimate=estimate,
+                candidates=candidates,
+                blocked=blocked,
+                now=now,
+            )
+
+    def _record_decision(
+        self,
+        tracked: TrackedMarket,
+        *,
+        snap: MarketSnapshot | None,
+        estimate: FairValueEstimate | None,
+        candidates: list[TradeCandidate],
+        blocked: str | None,
+        now: int,
+    ) -> None:
+        """Observability only: count the NO_TRADE reason and keep the market diagnostic."""
+        if blocked is not None:
+            self.pipeline.no_trade.add(blocked)
+        diag = market_diagnostic(
+            self.d.hub,
+            tracked,
+            snap=snap,
+            estimate=estimate,
+            candidates=candidates,
+            no_trade=blocked,
+            now_ms=now,
+        )
+        diag["window_end_ms"] = tracked.definition.window_end_ms
+        self.market_diag[tracked.definition.condition_id] = diag
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("decision %s: %s", tracked.definition.slug, blocked or "TRADE submitted")
 
     def _verdict(self, cand: TradeCandidate, now: int) -> ReviewVerdict:
         if self.d.reviewer is None:
@@ -553,6 +652,8 @@ class TradingCore:
         d = self.d
         now = d.clock.now_ms()
         verdict = self._verdict(cand, now)
+        self.pipeline.llm_checked += 1
+        self.pipeline.llm_verdicts.add(f"{verdict.status} (allowed={verdict.allowed})")
         if verdict.status == "needs_call":
             self._schedule_review(cand, snap, fv)
             return "llm review requested"
@@ -574,10 +675,15 @@ class TradingCore:
         )
         decision = d.risk.evaluate_entry(verdict.candidate, snap, ctx)
         d.store.insert_risk_decision(decision)
+        self.pipeline.risk_evaluated += 1
         if not decision.allowed:
             self.stats.risk_rejections += 1
             self._count_reject(decision.reasons[0] if decision.reasons else "rejected")
+            self.pipeline.risk_rejected += 1
+            for reason in decision.reasons or ("rejected",):
+                self.pipeline.risk_reasons.add(reason)
             return "risk: " + "; ".join(decision.reasons[:3])
+        self.pipeline.risk_approved += 1
         d.store.insert_candidate(
             candidate_id=cand.candidate_id,
             ts_ms=now,
@@ -616,12 +722,15 @@ class TradingCore:
         except ExecutionError as exc:
             log.warning("execution refused: %s", exc)
             self._count_reject(f"execution: {exc}")
+            self.pipeline.execution_refused += 1
             return None
         self.rates.record(d.clock.now_ms(), decision.condition_id, purpose)
         if purpose is OrderPurpose.ENTRY:
             self.stats.entries_submitted += 1
+            self.pipeline.paper_orders_entry += 1
         else:
             self.stats.exits_submitted += 1
+            self.pipeline.paper_orders_exit += 1
         if d.recorder is not None:
             d.recorder.record_bot("order", {"decision": decision, "record": record})
         return record
@@ -775,6 +884,52 @@ class TradingCore:
             },
         )
         store.publish_status("model_metrics", ts_ms=now, body=self.model_metrics())
+        store.publish_status("pipeline", ts_ms=now, body=self.pipeline_report(now))
+
+    # ------------------------------------------------------------------ diagnostics
+    def pipeline_report(self, now: int) -> dict[str, Any]:
+        """Funnel counters + market selection diagnostics (docs/diagnostics.md)."""
+        hub = self.d.hub
+        counters = self.pipeline.as_dict(now)
+        feeds = feed_diagnostics(hub)
+        active = {tm.definition.condition_id for tm in hub.active_markets(now)}
+        return {
+            "mode": self.d.mode.value,
+            "state": self.d.state.state.value,
+            "state_reason": self.d.state.reason,
+            "llm_reviewer": "off" if self.d.reviewer is None else self.d.config.llm.mode,
+            "counters": counters,
+            "why_zero": explain_zeros(counters, feeds),
+            "verdict": verdict(counters, feeds),
+            "feeds": feeds,
+            "active_markets": [
+                {k: v for k, v in diag.items() if k != "window_end_ms"}
+                for cid, diag in self.market_diag.items()
+                if cid in active
+            ],
+            "tracked_markets": tracked_markets(hub, now),
+            "price_to_beat_checks": list(hub.ptb_checks)[-10:],
+        }
+
+    def _log_pipeline(self, now: int) -> None:
+        interval_ms = self.d.config.monitoring.pipeline_log_interval_s * 1000
+        last = self._last_pipeline_log_ms
+        if last is not None and now - last < interval_ms:
+            return
+        self._last_pipeline_log_ms = now
+        report = self.pipeline_report(now)
+        level = logging.DEBUG if self.d.mode is TradingMode.REPLAY else logging.INFO
+        log.log(level, summary_line(report["counters"], report["feeds"]))
+        for diag in report["active_markets"]:
+            log.log(level, market_line(diag))
+        if report["price_to_beat_checks"]:
+            log.log(level, "latest price-to-beat check: %s", report["price_to_beat_checks"][-1])
+        log.log(level, "pipeline verdict: %s", report["verdict"])
+        if self.d.recorder is not None:
+            self.d.recorder.record_bot(
+                "pipeline_summary",
+                {"counters": report["counters"], "verdict": report["verdict"]},
+            )
 
     def _candidate_status(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []

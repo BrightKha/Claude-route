@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import deque
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any
@@ -37,6 +38,9 @@ from polymarket_bot.strategies.btc_5m.resolution import (
 from polymarket_bot.watchdog.health import HealthRegistry
 
 log = logging.getLogger(__name__)
+
+PTB_CHECKS_KEPT = 50
+MAX_MESSAGE_KEYS = 32
 
 
 @dataclass
@@ -76,11 +80,17 @@ class MarketDataHub:
         self.stats = HubStats(rejection_reasons={})
         self.apply_stats = ApplyStats()
         self.resolution_anomalies: list[str] = []
+        # Observability only (docs/diagnostics.md): never read by a decision.
+        self.message_counts: dict[str, int] = {}
+        self.ptb_checks: deque[dict[str, Any]] = deque(maxlen=PTB_CHECKS_KEPT)
 
     # ------------------------------------------------------------------ ingestion
     def on_raw(self, msg: RawMessage) -> list[str]:
         """Apply one message. Returns token ids newly requiring a subscription."""
         src, kind = msg.source, msg.kind
+        key = f"{src}:{kind}"
+        if key in self.message_counts or len(self.message_counts) < MAX_MESSAGE_KEYS:
+            self.message_counts[key] = self.message_counts.get(key, 0) + 1
         if src == "clob_ws":
             self._on_clob_ws(msg)
         elif src == "rtds":
@@ -168,6 +178,8 @@ class MarketDataHub:
             )
             tracked.last_refresh_ms = received_ms
             if settle.price_to_beat is not None:
+                if tracked.official_price_to_beat is None:
+                    self._record_ptb_check(tracked.definition, settle.price_to_beat, received_ms)
                 tracked.official_price_to_beat = settle.price_to_beat
             if settle.final_price is not None:
                 tracked.official_final_price = settle.final_price
@@ -185,6 +197,21 @@ class MarketDataHub:
                             f"{tracked.definition.slug}: {outcome.detail}"
                         )
         return new_tokens
+
+    def _record_ptb_check(self, d: MarketDefinition, official: Decimal, received_ms: int) -> None:
+        """Evidence: when Gamma publishes the price to beat, and does RTDS agree?"""
+        stream = self.reference.twap60.exact(d.window_start_ms)
+        diff = abs(float(official / stream.value) - 1) * 1e4 if stream is not None else None
+        check = {
+            "slug": d.slug,
+            "official": float(official),
+            "stream_twap_exact": float(stream.value) if stream is not None else None,
+            "diff_bps": None if diff is None else round(diff, 4),
+            "first_seen_after_start_s": round((received_ms - d.window_start_ms) / 1000, 1),
+            "first_seen_after_end_s": round((received_ms - d.window_end_ms) / 1000, 1),
+        }
+        self.ptb_checks.append(check)
+        log.debug("official price to beat first seen: %s", check)
 
     # ------------------------------------------------------------------ views
     def tracked_tokens(self, now_ms: int, *, grace_ms: int = 60_000) -> list[str]:
