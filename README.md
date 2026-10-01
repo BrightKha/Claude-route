@@ -53,6 +53,7 @@ make walk-forward
 make paper                   # or: python -m polymarket_bot.app --mode paper
 make status                  # read-only status from the local state DB
 make diagnose                # read-only decision-pipeline report: why (no) trades (docs/diagnostics.md)
+make ptb-validate            # price-to-beat evidence from recordings (policy stays OFF)
 make kill-switch             # engage the kill switch immediately
 
 # Restricted MCP server for Claude (stdio; read-only + proposals)

@@ -32,6 +32,7 @@ from polymarket_bot.domain.types import OrderStatus
 from polymarket_bot.lifecycle.kill_switch import KillSwitch, KillSwitchError
 from polymarket_bot.lifecycle.state_machine import BotStateMachine
 from polymarket_bot.monitoring.diagnose_report import format_diagnostic
+from polymarket_bot.monitoring.halt_history import halt_history
 from polymarket_bot.monitoring.logging_setup import setup_logging
 from polymarket_bot.monitoring.pipeline import funnel, iso_ms
 from polymarket_bot.promotion.gates import Evidence, Stage, approval_phrase, evaluate_promotion
@@ -40,6 +41,8 @@ from polymarket_bot.security.compliance import compliance_gate
 from polymarket_bot.security.redaction import install_excepthook
 from polymarket_bot.security.secrets import secret_env_vars_present
 from polymarket_bot.storage.sqlite_store import StateStore
+from polymarket_bot.strategies.btc_5m.ptb_validation import compute_stats
+from polymarket_bot.strategies.btc_5m.ptb_validation import gate as ptb_gate
 
 log = logging.getLogger("polymarket_bot.cli")
 
@@ -255,6 +258,8 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
         "published_ms": doc["published_ms"] if doc else None,
         "pipeline": doc["data"] if doc else None,
         "health": store.read_status("health"),
+        "price_to_beat_validation": ptb_validation_report(config, store),
+        "halts": halt_history(path.parent / "audit.jsonl", store.recent_incidents(500)),
         "audit_log": {
             "valid": audit_ok,
             "records": audit_n,
@@ -265,6 +270,73 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
         _print(report)
     else:
         print(format_diagnostic(report, now_ms=int(time.time() * 1000)))
+    return EXIT_OK
+
+
+def ptb_validation_report(config: AppConfig, store: StateStore) -> dict[str, Any]:
+    """PRICE_TO_BEAT_VALIDATION over every real observation stored so far."""
+    obs = store.ptb_observations()
+    fv = config.fair_value
+    stats = compute_stats(obs, max_diff_bps=fv.stream_price_to_beat_max_diff_bps)
+    open_, reasons = ptb_gate(stats, fv)
+    return {
+        "PRICE_TO_BEAT_VALIDATION": stats.as_dict(),
+        "policy": fv.stream_price_to_beat_policy,
+        "required_windows": fv.stream_price_to_beat_min_windows,
+        "max_diff_bps": fv.stream_price_to_beat_max_diff_bps,
+        "gate_open": open_,
+        "gate_closed_because": reasons,
+        "latest": [
+            {
+                "window": o["slug"],
+                "official_price_to_beat": o["official"],
+                "rtds_twap_at_window_start": o["stream"],
+                "difference_bps": o["diff_bps"],
+                "source": o["source"],
+            }
+            for o in obs[-20:]
+        ],
+    }
+
+
+def cmd_ptb_validate(args: argparse.Namespace) -> int:
+    """Accumulate price-to-beat evidence from recordings (never changes the policy)."""
+    from polymarket_bot.app.ptb_scan import find_sessions, scan_session  # noqa: PLC0415
+
+    config = _config(args)
+    data_dir = _data_dir(args, config)
+    root = Path(args.input) if args.input else data_dir / "recordings"
+    scans = [scan_session(config, path) for path in find_sessions(root)]
+    db = data_dir / "state.sqlite"
+    added = 0
+    if args.dry_run:
+        report: dict[str, Any] = (
+            ptb_validation_report(config, StateStore(db, read_only=True)) if db.exists() else {}
+        )
+    else:
+        store = StateStore(db)
+        for scan in scans:
+            added += sum(store.insert_ptb_observation(o) for o in scan.observations)
+        report = ptb_validation_report(config, store)
+    report["sessions"] = [
+        {
+            "session": sc.session,
+            "synthetic": sc.synthetic,
+            "messages": sc.messages,
+            "observations": len(sc.observations),
+            "error": sc.error,
+        }
+        for sc in scans
+    ]
+    report["observations_added"] = added
+    if args.dry_run:
+        # read-only store: show what the recordings alone would give
+        found = [o for sc in scans for o in sc.observations]
+        stats = compute_stats(
+            found, max_diff_bps=config.fair_value.stream_price_to_beat_max_diff_bps
+        )
+        report["PRICE_TO_BEAT_VALIDATION_recordings_only"] = stats.as_dict()
+    _print(report)
     return EXIT_OK
 
 
@@ -507,6 +579,12 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("diagnose", help="read-only decision-pipeline diagnostic (why no trade)")
     s.add_argument("--json", action="store_true", help="full machine-readable report")
     s.set_defaults(func=cmd_diagnose)
+    s = sub.add_parser(
+        "ptb-validate", help="accumulate price-to-beat evidence from recordings (read-only data)"
+    )
+    s.add_argument("--input", default=None, help="recording or directory of recordings")
+    s.add_argument("--dry-run", action="store_true", help="do not write to the state DB")
+    s.set_defaults(func=cmd_ptb_validate)
     sub.add_parser("live-readiness", help="live-lock checklist").set_defaults(
         func=cmd_live_readiness
     )

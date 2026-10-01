@@ -77,7 +77,13 @@ class KillSwitch:
             now, "critical", "kill_switch", {"reason": reason, "source": source}
         )
         if self._sm.state not in (BotState.KILL_SWITCH, BotState.DEAD):
-            self._sm.transition(BotState.KILL_SWITCH, f"kill switch: {reason}", manual_only=True)
+            self._sm.transition(
+                BotState.KILL_SWITCH,
+                f"kill switch: {reason}",
+                manual_only=True,
+                component=f"kill_switch:{source}",
+                details={"reason": reason, "source": source},
+            )
         if not already:
             log.critical("KILL SWITCH ENGAGED by %s: %s", source, reason)
 

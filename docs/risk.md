@@ -62,9 +62,23 @@ I-HAVE-INVESTIGATED-AND-ACCEPT-RESET` ⇒ state DISABLED; a restart is required.
 ## Watchdog
 
 Recoverable (auto-resume after resync, rate-limited): market/reference stream
-down or silent, clock drift unknown, reconciliation stale. Manual: event-loop
+down or silent (silent = no order-book event for `max_market_data_silence_s`,
+no live Chainlink spot/TWAP tick for `max_reference_silence_s`; heartbeats and
+unrelated frames do not count), clock drift unknown, reconciliation stale. Manual: event-loop
 stall, clock drift beyond limit, reconciliation mismatch, UNKNOWN orders,
 unhandled exceptions. A separate thread detects a blocked event loop.
+
+## Price to beat (data gate, `config/app_config.py` → `fair_value`)
+
+| field | default | meaning |
+|---|---|---|
+| `price_to_beat_tolerance_bps` | 2.0 | official Gamma value vs RTDS TWAP at window start must agree, else "conflict" ⇒ NO_TRADE |
+| `stream_price_to_beat_policy` | `off` | `off`: without Gamma's official value (published only after the window) ⇒ NO_TRADE. `evidence_gated`: the RTDS TWAP tick at the window start may be used, only while the evidence below holds |
+| `stream_price_to_beat_min_windows` | 100 (schema minimum 100) | paired windows (official + stream) required before the gate can open |
+| `stream_price_to_beat_max_diff_bps` | 0.01 | every paired window must match within this; one mismatch closes the gate (incident; manual halt when the policy is on) |
+
+Synthetic observations never count. Evidence: `make ptb-validate` / `make diagnose`
+(docs/diagnostics.md). Only the operator can change these (config file; no MCP/LLM path).
 
 ## Promotion pipeline (`promotion/gates.py`)
 

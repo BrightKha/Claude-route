@@ -21,6 +21,8 @@ from polymarket_bot.domain.clock import Clock
 from polymarket_bot.domain.market import MarketDefinition
 from polymarket_bot.domain.snapshot import MarketSnapshot, ReferenceView, TokenQuote
 from polymarket_bot.market.clob_messages import (
+    BOOK_EVENTS,
+    PRICE_EVENTS,
     ApplyStats,
     MessageError,
     apply_market_event,
@@ -29,6 +31,7 @@ from polymarket_bot.market.clob_messages import (
 )
 from polymarket_bot.market.orderbook import OrderBookState
 from polymarket_bot.ports import RawMessage
+from polymarket_bot.strategies.btc_5m.ptb_validation import PriceToBeatValidator
 from polymarket_bot.strategies.btc_5m.resolution import (
     RULES_BY_ID,
     iter_event_markets,
@@ -83,6 +86,8 @@ class MarketDataHub:
         # Observability only (docs/diagnostics.md): never read by a decision.
         self.message_counts: dict[str, int] = {}
         self.ptb_checks: deque[dict[str, Any]] = deque(maxlen=PTB_CHECKS_KEPT)
+        # Evidence for the (OFF by default) in-window price-to-beat policy.
+        self.ptb_validator: PriceToBeatValidator | None = None
 
     # ------------------------------------------------------------------ ingestion
     def on_raw(self, msg: RawMessage) -> list[str]:
@@ -112,6 +117,9 @@ class MarketDataHub:
             self._health.market_stream(connected=connected)
             return
         self._health.market_stream(connected=self.market_ws_connected, msg_ms=msg.received_ms)
+        if msg.kind == "heartbeat":
+            self._health.market_heartbeat(msg.received_ms)
+            return
         if msg.kind != "ws_frame" or not isinstance(msg.payload, str):
             return
         self.stats.frames += 1
@@ -120,12 +128,18 @@ class MarketDataHub:
         except MessageError:
             self.stats.malformed_frames += 1
             return
+        before = dict(self.apply_stats.by_type)
         for event in events:
             for exchange_ms in apply_market_event(
                 event, self.books, msg.received_ms, self.apply_stats
             ):
                 self.drift.add(exchange_ms, msg.received_ms)
         self._health.clock_drift(self.drift.estimate_ms())
+        applied = {t for t, n in self.apply_stats.by_type.items() if n != before.get(t, 0)}
+        if applied & BOOK_EVENTS:
+            self._health.market_book_event(msg.received_ms)
+        if applied & PRICE_EVENTS:
+            self._health.market_price_event(msg.received_ms)
 
     def _on_rtds(self, msg: RawMessage) -> None:
         if msg.kind == "connection":
@@ -133,9 +147,15 @@ class MarketDataHub:
             self.rtds_connected = connected
             self._health.reference_stream(connected=connected)
             return
+        self._health.reference_stream(connected=self.rtds_connected, msg_ms=msg.received_ms)
+        if msg.kind == "heartbeat":
+            self._health.reference_heartbeat(msg.received_ms)
+            return
         if msg.kind == "ws_frame" and isinstance(msg.payload, str):
             if self.reference.on_frame(msg.payload, msg.received_ms):
-                self._health.reference_stream(connected=self.rtds_connected, msg_ms=msg.received_ms)
+                for series, ms in self.reference.last_live_ms.items():
+                    if ms == msg.received_ms:
+                        self._health.reference_event(series, ms)
 
     def _on_rest_book(self, msg: RawMessage) -> None:
         payload: Any = msg.payload
@@ -202,6 +222,15 @@ class MarketDataHub:
         """Evidence: when Gamma publishes the price to beat, and does RTDS agree?"""
         stream = self.reference.twap60.exact(d.window_start_ms)
         diff = abs(float(official / stream.value) - 1) * 1e4 if stream is not None else None
+        if self.ptb_validator is not None:
+            self.ptb_validator.observe(
+                slug=d.slug,
+                window_start_ms=d.window_start_ms,
+                official=official,
+                stream=stream.value if stream is not None else None,
+                diff_bps=diff,
+                first_seen_ms=received_ms,
+            )
         check = {
             "slug": d.slug,
             "official": float(official),
@@ -298,6 +327,7 @@ class MarketDataHub:
             d.window_start_ms,
             tracked.official_price_to_beat,
             tolerance_bps=self._cfg.fair_value.price_to_beat_tolerance_bps,
+            accept_stream_only=self.ptb_validator is not None and self.ptb_validator.allowed(),
         )
         if now >= d.window_start_ms and not ptb.verified:
             reasons.append(f"price to beat not verified: {ptb.detail}")

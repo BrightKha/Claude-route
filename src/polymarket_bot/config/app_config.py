@@ -54,6 +54,13 @@ class FairValueConfig(_Strict):
     vol_uncertainty_mult: float = Field(0.30, ge=0, le=2)
     model_error_bps: float = Field(3.0, ge=0, description="TWAP reproduction + basis error")
     price_to_beat_tolerance_bps: float = Field(2.0, ge=0)
+    # In-window price to beat from the RTDS TWAP tick at the window start (Gamma
+    # publishes the official value only after the window). OFF by default; even when
+    # "evidence_gated" it is used only after >= min_windows paired observations all
+    # matched within max_diff_bps (strategies/btc_5m/ptb_validation.py).
+    stream_price_to_beat_policy: Literal["off", "evidence_gated"] = "off"
+    stream_price_to_beat_min_windows: int = Field(100, ge=100)
+    stream_price_to_beat_max_diff_bps: float = Field(0.01, ge=0, le=1.0)
     calibrator_path: str | None = None
 
 

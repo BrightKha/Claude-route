@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS equity_marks (
 CREATE TABLE IF NOT EXISTS promotion_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, stage TEXT NOT NULL,
   action TEXT NOT NULL, actor TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS price_to_beat_observations (
+  slug TEXT PRIMARY KEY, window_start_ms INTEGER NOT NULL, official TEXT NOT NULL,
+  stream TEXT, diff_bps REAL, first_seen_ms INTEGER NOT NULL, source TEXT NOT NULL,
+  synthetic INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS runtime_status (
   name TEXT PRIMARY KEY, ts_ms INTEGER NOT NULL, body TEXT NOT NULL);
 """
@@ -381,6 +385,38 @@ class StateStore:
         return sum((Decimal(r["cost_usd"]) for r in rows), Decimal(0))
 
     # ------------------------------------------------------------ incidents etc.
+    # ------------------------------------------------------------------ price-to-beat evidence
+    def insert_ptb_observation(self, obs: dict[str, Any]) -> bool:
+        """First observation of a window wins (live and replayed evidence never double count)."""
+        with self._tx() as cur:
+            cur.execute(
+                "INSERT OR IGNORE INTO price_to_beat_observations(slug, window_start_ms, official, "
+                "stream, diff_bps, first_seen_ms, source, synthetic) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    obs["slug"],
+                    obs["window_start_ms"],
+                    str(obs["official"]),
+                    None if obs["stream"] is None else str(obs["stream"]),
+                    obs["diff_bps"],
+                    obs["first_seen_ms"],
+                    obs["source"],
+                    int(bool(obs["synthetic"])),
+                ),
+            )
+            return cur.rowcount == 1
+
+    def ptb_observations(self, *, include_synthetic: bool = False) -> list[dict[str, Any]]:
+        try:
+            rows = self._query(
+                "SELECT slug, window_start_ms, official, stream, diff_bps, first_seen_ms, source, "
+                "synthetic FROM price_to_beat_observations WHERE synthetic <= ? "
+                "ORDER BY window_start_ms",
+                (int(include_synthetic),),
+            )
+        except sqlite3.OperationalError:  # database created before this table existed
+            return []
+        return [dict(r) for r in rows]
+
     def insert_incident(self, ts_ms: int, severity: str, kind: str, body: object) -> None:
         with self._tx() as cur:
             cur.execute(

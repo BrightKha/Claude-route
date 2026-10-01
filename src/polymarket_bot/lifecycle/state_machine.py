@@ -15,6 +15,7 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from polymarket_bot.domain.clock import Clock
 from polymarket_bot.domain.types import BotState
@@ -64,6 +65,8 @@ class StateChange:
     reason: str
     manual_only: bool
     ts_ms: int
+    component: str = "lifecycle"  # who requested the change (docs/incident-response.md)
+    details: dict[str, Any] | None = None  # the exact condition, for halts and recoveries
 
 
 Listener = Callable[[StateChange], None]
@@ -116,6 +119,8 @@ class BotStateMachine:
         manual: bool = False,
         manual_only: bool = False,
         live_authorization: LiveAuthorization | None = None,
+        component: str = "lifecycle",
+        details: dict[str, Any] | None = None,
     ) -> StateChange | None:
         """Move to ``target``. Returns None when already there (idempotent halts)."""
         with self._lock:
@@ -140,15 +145,40 @@ class BotStateMachine:
             )
             if target is BotState.KILL_SWITCH:
                 self._manual_only = True
-            change = StateChange(current, target, reason, self._manual_only, self._clock.now_ms())
+            change = StateChange(
+                current,
+                target,
+                reason,
+                self._manual_only,
+                self._clock.now_ms(),
+                component=component,
+                details=details,
+            )
         log.warning("bot state %s -> %s: %s", current, target, reason)
         for listener in self._listeners:
             listener(change)
         return change
 
-    def halt(self, reason: str, *, manual_only: bool = False) -> StateChange | None:
-        """Block new entries. Safe to call from any non-terminal state."""
+    def halt(
+        self,
+        reason: str,
+        *,
+        manual_only: bool = False,
+        component: str = "unknown",
+        details: dict[str, Any] | None = None,
+    ) -> StateChange | None:
+        """Block new entries. Safe to call from any non-terminal state.
+
+        ``component`` and ``details`` name the source and the exact condition;
+        they are journaled as an explicit ``halt`` audit event.
+        """
         with self._lock:
             if self._state in (BotState.KILL_SWITCH, BotState.DEAD, BotState.DISABLED):
                 return None
-            return self.transition(BotState.HALTED, reason, manual_only=manual_only)
+            return self.transition(
+                BotState.HALTED,
+                reason,
+                manual_only=manual_only,
+                component=component,
+                details=details,
+            )

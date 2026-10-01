@@ -20,7 +20,9 @@ python -m polymarket_bot.app kill-switch reset --operator NAME \
 | **Kill switch engaged** (loss limit, invariant violation) | entries blocked; exits only at risk-exit prices | read `status` incidents and `audit.jsonl`; verify positions on the venue; understand the cause; reset only with a written note; restart |
 | **Order state UNKNOWN** (timeout / ambiguous ack) | no new orders; venue queried; HALTED (manual) after `unknown_state_timeout_s` | stop the bot; `orders list`; check the order on Polymarket (open orders, trades). If it never reached the book: `orders resolve-no-fill --intent ID --operator NAME --note "..."`. If it filled: flatten the position on the venue by hand, then resolve it the same way (reconciliation re-checks at restart). Never resubmit blindly |
 | **Reconciliation mismatch** | entries blocked at once; HALTED (manual) if confirmed on re-check | compare venue positions/collateral with `status`; an **external order** on the wallet ⇒ assume key compromise (below) |
-| **Market/reference stream down or silent** | books invalidated, HALTED (auto-recovery after resync, rate-limited) | if recoveries exceed the hourly limit the halt becomes manual: check connectivity / Polymarket status |
+| **Market/reference stream down or silent** (silent = no order-book event / no live Chainlink spot-TWAP tick; heartbeats do not count) | books invalidated, HALTED (auto-recovery after resync, rate-limited) | `make diagnose` → HALTS and LIVENESS show which signal stopped; if recoveries exceed the hourly limit the halt becomes manual: check connectivity / Polymarket status (legacy RTDS price topics are planned for removal ~2026-10-23, research §4.2) |
+| **Price-to-beat mismatch** (RTDS TWAP at window start ≠ Gamma official value) | incident `price_to_beat_mismatch`; with the stream policy on: gate closed + HALTED (manual) | keep the policy off; investigate the window in `make diagnose` (PRICE_TO_BEAT_VALIDATION) and `docs/research.md` §5 |
+| **Reference unit mismatch** (`unit_mismatch` rejections in REFERENCE FEEDS) | ticks rejected, never rescaled; the series goes stale ⇒ NO_TRADE | compare the raw strings shown by `diagnose` with research §4.1; a new encoding needs a research update and a new topic contract |
 | **Clock drift beyond limit** | HALTED (manual) | fix NTP; restart |
 | **Event loop stall** | HALTED (manual) by the stall-detector thread; incident file written | inspect CPU/IO, logs; restart |
 | **Resolution anomaly** (official outcome inconsistent with the rule) | HALTED (manual) | re-read the market rules on Polymarket; update `strategies/btc_5m/resolution.py` and `docs/research.md` only with evidence |
@@ -28,6 +30,12 @@ python -m polymarket_bot.app kill-switch reset --operator NAME \
 | **Claude unavailable / budget exhausted** | advisory: trade only if allowed without review; required: no trades | none required; check API status and budget |
 | **Geoblock / compliance failure** | live refuses to start | do not work around it |
 | **Suspected secret leak** (scanner hit, key in a log, external order) | — | engage kill switch; revoke CLOB API keys; move remaining funds from the wallet with a separate, trusted tool; rotate `ANTHROPIC_API_KEY`; purge the leaked artifact (git history rewrite if needed); review audit log |
+
+Every halt writes an explicit `halt` audit event (cause, source component,
+category, exact condition incl. every liveness age); leaving HALTED writes
+`recovery_started` and `recovered` with the same `halt_id` and the original
+cause. `make diagnose` → HALTS lists them (older logs: from the state-change
+reason and the watchdog incident).
 
 ## After any incident
 
